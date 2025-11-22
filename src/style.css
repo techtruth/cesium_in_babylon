@@ -1,0 +1,12 @@
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+}
+
+#renderCanvas {
+  width: 100vw;
+  height: 100vh;
+  display: block;
+}
