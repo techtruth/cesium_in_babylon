@@ -97,6 +97,53 @@ export class EllipsoidalOccluder {
     }
 
     /**
+     * Determines whether or not a point expressed in the ellipsoid scaled space, is hidden from view by the
+     * occluder, taking into account terrain that might be below the ellipsoid surface.
+     * 
+     * This method is used for terrain tiles that might extend below the reference ellipsoid (e.g., ocean floors,
+     * valleys below sea level). When minimumHeight is negative and significant relative to the ellipsoid size,
+     * the method adjusts the occlusion calculation by effectively shrinking the ellipsoid.
+     * 
+     * @param {Cartesian3} occludeeScaledSpacePosition The point to test for visibility in scaled space.
+     * @param {number} minimumHeight The minimum height of the terrain being tested. When negative and 
+     *                               significant, causes the ellipsoid to be effectively shrunk for occlusion.
+     * @returns {boolean} true if the occludee is visible; otherwise false.
+     */
+    isScaledSpacePointVisiblePossiblyUnderEllipsoid(
+        occludeeScaledSpacePosition: Cartesian3, 
+        minimumHeight: number
+    ): boolean {
+        const ellipsoid = this._ellipsoid;
+        let vhMagnitudeSquared: number;
+        let cv: Cartesian3;
+
+        // If minimumHeight is significantly below the ellipsoid surface, we need to adjust
+        // the camera position calculation to account for the "shrunk" ellipsoid
+        if (defined(minimumHeight) && 
+            minimumHeight < 0 && 
+            ellipsoid.minimumRadius > -minimumHeight) {
+            
+            // Create a shrunk camera position in scaled space
+            const scratchCameraPositionInScaledSpaceShrunk = new Cartesian3();
+            cv = scratchCameraPositionInScaledSpaceShrunk;
+            cv.x = this._cameraPosition.x / (ellipsoid.radii.x + minimumHeight);
+            cv.y = this._cameraPosition.y / (ellipsoid.radii.y + minimumHeight);  
+            cv.z = this._cameraPosition.z / (ellipsoid.radii.z + minimumHeight);
+            vhMagnitudeSquared = cv.x * cv.x + cv.y * cv.y + cv.z * cv.z - 1.0;
+        } else {
+            // Use the standard camera position and distance to limb
+            cv = this._cameraPositionInScaledSpace;
+            vhMagnitudeSquared = this._distanceToLimbInScaledSpaceSquared;
+        }
+
+        return isScaledSpacePointVisible(
+            occludeeScaledSpacePosition,
+            cv,
+            vhMagnitudeSquared
+        );
+    }
+
+    /**
      * Computes a point that can be used for horizon culling from a list of positions.  If the point is below
      * the horizon, all of the positions are guaranteed to be below the horizon as well.
      */

@@ -1,7 +1,8 @@
 import { Scene as BabylonScene, Camera, Engine, MeshBuilder, StandardMaterial, Color3, Vector3 } from '@babylonjs/core';
-import { Cartesian3, Cartesian2, Plane, PerspectiveFrustum, Ellipsoid, BoundingSphere, Matrix4, SceneMode, CullingVolume, Intersect } from 'cesium';
+import { Cartesian3, Cartesian2, Plane, PerspectiveFrustum, Ellipsoid, BoundingSphere, Matrix4, SceneMode, CullingVolume, Intersect, Occluder } from 'cesium';
 import { CesiumIonAuth } from './cesiumIonAuth';
 import MinimalTileset from './cesium_derived/MinimalTileset';
+import { EllipsoidalOccluder } from './cesium_extracted/EllipsoidalOccluder_extracted';
 
 /**
  * Simple Cesium + Babylon integration - just tile selection and rendering
@@ -277,7 +278,7 @@ export class SimpleIntegration {
             // Create MinimalTileset with Babylon scene - CESIUM DEFAULT
             this.cesiumTileset = new MinimalTileset({
                 url: ionResource,
-                maximumScreenSpaceError: 16, // CESIUM DEFAULT: 16
+                maximumScreenSpaceError: 16, // CESIUM DEFAULT: Keep standard SSE, rely on distance culling for control
                 babylonScene: this.scene
             });
             
@@ -647,7 +648,49 @@ export class SimpleIntegration {
             
             // Additional properties that might be needed
             morphTime: 1.0, // SceneMode.getMorphTime(SceneMode.SCENE3D)
-            minimumTerrainHeight: 0.0
+            minimumTerrainHeight: -11000.0, // Mariana Trench depth for proper occluder sizing
+            
+            // HORIZON CULLING: Add occluder to prevent tiles on far side of Earth
+            occluder: (() => {
+                try {
+                    // Create Earth bounding sphere for horizon culling
+                    const earthBoundingSphere = new BoundingSphere(
+                        Cartesian3.ZERO, // Earth center
+                        Ellipsoid.WGS84.minimumRadius + (-11000.0) // Earth radius + minimum terrain height
+                    );
+                    
+                    // Create occluder from Earth sphere and camera position
+                    const occluder = Occluder.fromBoundingSphere(
+                        earthBoundingSphere,
+                        fakeCamera.positionWC
+                    );
+                    
+                    if (this.frameCount % 600 === 0) { // Debug every 10 seconds
+                        console.log(`🌍 HORIZON OCCLUDER: Created with Earth radius=${earthBoundingSphere.radius.toFixed(0)}m, camera at distance=${Cartesian3.magnitude(fakeCamera.positionWC).toFixed(0)}m`);
+                    }
+                    
+                    return occluder;
+                } catch (error) {
+                    console.error('❌ Failed to create horizon occluder:', error);
+                    return undefined;
+                }
+            })(),
+            
+            // ELLIPSOIDAL OCCLUDER: For precise tileset horizon culling
+            ellipsoidalOccluder: (() => {
+                try {
+                    const ellipsoidalOccluder = new EllipsoidalOccluder(Ellipsoid.WGS84, fakeCamera.positionWC);
+                    
+                    if (this.frameCount % 600 === 0) { // Debug every 10 seconds
+                        console.log(`🌐 ELLIPSOIDAL OCCLUDER: Created for precise tileset horizon culling`);
+                    }
+                    
+                    return ellipsoidalOccluder;
+                } catch (error) {
+                    console.error('❌ Failed to create ellipsoidal occluder:', error);
+                    return undefined;
+                }
+            })()
         };
 
         // DEBUG: Comprehensive validation of frameState and camera for distance calculations

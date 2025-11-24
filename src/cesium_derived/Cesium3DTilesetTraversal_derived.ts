@@ -1,9 +1,15 @@
 /**
- * Traverses a {@link Cesium3DTileset} to determine which tiles to load and render.
- * This type describes an interface and is not intended to be instantiated directly.
+ * BABYLON DERIVED: Traverses a {@link Cesium3DTileset} to determine which tiles to load and render.
+ * DERIVED FROM: @cesium/engine/Source/Scene/Cesium3DTilesetTraversal.js
  * 
- * Extracted from Cesium Engine (@cesium/engine/Source/Scene/Cesium3DTilesetTraversal.js)
- * Modified for TypeScript and Babylon.js integration
+ * BABYLON DEVIATIONS FROM CESIUM:
+ * 1. Added horizon culling logic for 3D tiles (not in original Cesium)
+ * 2. Added camera-inside-tile detection to prevent incorrect horizon culling
+ * 3. Added coordinate system validation and debugging
+ * 4. Modified to work with Babylon.js coordinate system requirements
+ * 
+ * CESIUM COMPLIANCE: All other traversal logic follows Cesium's exact patterns.
+ * The core tile selection algorithm remains identical to Cesium's source.
  *
  * @alias Cesium3DTilesetTraversal
  * @constructor
@@ -17,8 +23,8 @@
  */
 
 import { defined, Intersect, DeveloperError, Ellipsoid, Cartesian3 } from 'cesium';
-import { Cesium3DTileOptimizationHint } from './Cesium3DTileOptimizationHint_extracted';
-import { Cesium3DTileRefine } from './Cesium3DTileRefine_extracted';
+import { Cesium3DTileOptimizationHint } from '../cesium_extracted/Cesium3DTileOptimizationHint_extracted';
+import { Cesium3DTileRefine } from '../cesium_extracted/Cesium3DTileRefine_extracted';
 
 function Cesium3DTilesetTraversal() {}
 
@@ -142,6 +148,14 @@ Cesium3DTilesetTraversal.loadTile = function (tile: any, frameState: any): void 
   if (!isOnScreenLongEnough(tile, frameState)) {
     return;
   }
+
+  // TEMPORARILY DISABLED: Distance culling to test pure frustum culling
+  // const tileDistance = tile._distanceToCamera || 0;
+  // const maxRequestDistance = 50000; // 50km max request distance for street-level view
+  // if (tileDistance > maxRequestDistance) {
+  //   // Don't even add distant tiles to the request queue
+  //   return;
+  // }
 
   const cameraHasNotStoppedMovingLongEnough =
     frameState.camera.timeSinceMoved < tileset.foveatedTimeDelay;
@@ -291,8 +305,9 @@ function updateTileVisibility(tile: any, frameState: any): void {
       // CRITICAL: Ensure tileset transforms are updated before accessing tile bounding spheres
       // This triggers the updateTransform() call that fixes coordinate systems
       if (tile.tileset) {
-        // Access tileset.boundingSphere to trigger updateTransform
-        if (tile.tileset && tile.tileset.boundingSphere) {
+        // Access tileset.boundingSphere to trigger updateTransform on the root tile
+        // This ensures all tiles in the hierarchy have proper world coordinates
+        if (tile.tileset.boundingSphere) {
           tile.tileset.boundingSphere;
         }
       }
@@ -337,13 +352,18 @@ function updateTileVisibility(tile: any, frameState: any): void {
             occludeePointInScaledSpace
         );
         
-        // Debug output disabled
+        // All horizon debug logs disabled
         
         if (!isVisible) {
           // Tile is behind Earth's horizon - mark as not visible
           tile._visible = false;
           
-          // Horizon culling debug disabled
+          // DEBUG: Log horizon culling occasionally
+          if (frameState.frameNumber % 1200 === 0) { // Every 20 seconds
+            const distance = tile._distanceToCamera || 'unknown';
+            console.log(`🌍 HORIZON CULLED: Tile behind Earth's horizon (distance: ${distance})`);
+            console.log(`   Camera position in ellipsoidalOccluder: `, frameState.ellipsoidalOccluder._cameraPosition);
+          }
           return; // Early exit - tile is horizon culled
         }
       }
