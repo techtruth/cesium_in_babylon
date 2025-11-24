@@ -40,64 +40,43 @@ import { Scene as BabylonScene } from '@babylonjs/core';
 
 
 /**
- * CESIUM REFERENCE: @cesium/engine/Source/Scene/Cesium3DTileset.js
+ * A tileset that conforms to the 3D Tiles specification.
+ * Based on Cesium3DTileset implementation for compatibility with Cesium tile management.
  * 
- * MinimalTileset: A COPY CLONE of Cesium3DTileset for tile selection and management
- * 
- * PURPOSE:
- * - CLONES Cesium's reference implementation using imported Cesium modules
- * - Maintains ALL Cesium patterns: statistics, cache, request management, priorities
- * - Focuses on tile functionality while preserving Cesium's exact behavior
- * - Uses real Cesium3DTilesetStatistics, Cesium3DTilesetCache, and other reference modules
- * - Provides seamless compatibility with Cesium's tile system for Babylon.js rendering
- * 
- * FOG INTEGRATION:
- * - Implements dynamic screen space error (fog-based tile culling) exactly like Cesium3DTileset.js
- * - Uses CesiumMath.fog() calculation: 1 - exp(-(distance * density)²)
- * - Reduces tile detail for distant objects based on camera orientation and height
- * - Applies horizon factor for "street view" optimization and height-based falloff
- * - Integrates automatically with Cesium3DTile.getScreenSpaceError() method
- * 
- * REFERENCE COMPLIANCE: This implementation follows Cesium3DTileset.js reference exactly.
+ * @alias MinimalTileset
+ * @constructor
  */
 export default class MinimalTileset {
-    // REFERENCE CLONE: Core properties matching Cesium3DTileset exactly
     private _url: string | IonResource;
     private _root?: Cesium3DTile;
     private _ready: boolean = false;
     private _readyPromise: Promise<void>;
     private _resource!: Resource | IonResource;
-    private _asset: any = undefined; // Metadata for the entire tileset
-    private _properties: any = undefined; // Metadata for per-model/point/etc properties
-    private _geometricError: number = 0; // Geometric error when the tree is not rendered at all
-    private _scaledGeometricError: number = 0; // Geometric error scaled by root tile scale
+    private _asset: any = undefined;
+    private _properties: any = undefined;
+    private _geometricError: number = 0;
+    private _scaledGeometricError: number = 0;
     
-    // REFERENCE CLONE: Statistics and cache management like reference
     private _cache: Cesium3DTilesetCache;
     private _statistics: Cesium3DTilesetStatistics;
     private _statisticsLast: Cesium3DTilesetStatistics;
     private _statisticsPerPass: Cesium3DTilesetStatistics[];
     
-    // REFERENCE CLONE: Frame tracking exactly like reference
     public _updatedVisibilityFrame: number = 0;
     private _updatedModelMatrixFrame: number = 0;
     private _modelMatrixChanged: boolean = false;
     private _previousModelMatrix?: Matrix4;
     
-    // REFERENCE CLONE: Model matrix and coordinate system
     public modelMatrix: Matrix4 = Matrix4.IDENTITY.clone();
     private _modelMatrix: Matrix4 = Matrix4.IDENTITY.clone();
     
-    // REFERENCE CLONE: Optimization settings exactly like reference
-    public progressiveResolutionHeightFraction: number = 0.3; // Reference default: 0.3
-    public isSkippingLevelOfDetail: boolean = true; // USE SKIPTRAVERSAL for progressive refinement
+    public progressiveResolutionHeightFraction: number = 0.3;
+    public isSkippingLevelOfDetail: boolean = true;
     public cullRequestsWhileMoving: boolean = true;
     public cullRequestsWhileMovingMultiplier: number = 60.0;
-    // BABYLON DEVIATION: Disable preferLeaves to reduce gaps
-    // Cesium default: false, but setting true can create coverage gaps
-    public preferLeaves: boolean = false; // Allow parent tiles to fill gaps when children unavailable
+    public preferLeaves: boolean = false;
     
-    // BABYLON DEVIATION: Enable loadSiblings to reduce gaps
+    // Enable loadSiblings to reduce gaps
     // When true, forces sibling tiles to load together, reducing coverage holes
     public loadSiblings: boolean = true; // Ensure sibling tiles load together to prevent gaps
     
@@ -259,7 +238,6 @@ export default class MinimalTileset {
             // Initialize root tile properties needed by getPriorityReverseScreenSpaceError (reference line 1012)
             (this._root as any)._screenSpaceError = 0;
             
-            console.log(`📊 Tileset initialized: geometricError=${this._geometricError}, scaledGeometricError=${this._scaledGeometricError}`);
             
             this._ready = true;
             
@@ -292,8 +270,6 @@ export default class MinimalTileset {
 
         // Debug: Log bounding volume data to verify it's correct
         if (!parent) {
-            console.log('🔍 Root tile bounding volume:', JSON.stringify(tileJson.boundingVolume));
-            console.log('🔍 Root tile transform:', tileJson.transform ? JSON.stringify(tileJson.transform) : 'none');
         }
 
         // Create the tile with proper constructor parameters exactly like reference makeTile:
@@ -305,18 +281,6 @@ export default class MinimalTileset {
             parent as any       // parent (can be undefined)
         );
         
-        // DEBUG: Check tile bounding sphere immediately after creation
-        if (!parent) {
-            console.log('🔍 Root tile after creation:');
-            if (tile.boundingSphere && tile.boundingSphere.center) {
-                const center = tile.boundingSphere.center;
-                console.log(`   boundingSphere center: (${center.x.toFixed(0)}, ${center.y.toFixed(0)}, ${center.z.toFixed(0)})`);
-                console.log(`   boundingSphere radius: ${tile.boundingSphere.radius.toFixed(0)}`);
-            } else {
-                console.log(`   boundingSphere: ${tile.boundingSphere ? 'exists but no center' : 'missing'}`);
-            }
-            console.log(`   tileset reference: ${!!(tile as any).tileset ? 'present' : 'missing'}`);
-        }
         
         // ✅ CESIUM EXACT: All properties are initialized by Cesium3DTile constructor
         // ✅ contentAvailable, contentReady, contentVisibility are already on prototype
@@ -409,80 +373,6 @@ export default class MinimalTileset {
             // Test updateVisibility and focus on the _visible contradiction  
             rootTile.updateVisibility(frameState);
             
-            // DEBUG: Minimal root tile status and distance
-            if (!rootTile.contentAvailable) {
-                console.log(`⚠️ Root tile contentAvailable=false (contentState=${rootTile._contentState}, hasRenderableContent=${rootTile.hasRenderableContent})`);
-            }
-            console.log(`📏 Root tile distance: ${rootTile._distanceToCamera?.toFixed(0) || 'undefined'} units`);
-            console.log(`📐 Root tile SSE: ${rootTile._screenSpaceError?.toFixed(1) || 'undefined'} pixels (threshold: ${this.maximumScreenSpaceError})`);
-            console.log(`🎯 Root tile geometricError: ${rootTile.geometricError?.toFixed(0) || 'undefined'}`);
-            
-            // CESIUM EXACT: Distance 0 is CORRECT when camera is inside the bounding volume
-            if (rootTile._distanceToCamera === 0) {
-                console.log(`✅ CESIUM BEHAVIOR: Root tile distance is 0 - camera is inside bounding volume`);
-                console.log(`   This should trigger refinement to children (this is correct!)`);
-            }
-            
-            // DEBUG: Investigate bounding volume and distance calculation issues
-            if (rootTile.boundingVolume && rootTile.boundingVolume.center) {
-                const bvCenter = rootTile.boundingVolume.center;
-                console.log(`   boundingVolume center: (${bvCenter.x}, ${bvCenter.y}, ${bvCenter.z})`);
-                console.log(`   boundingVolume radius: ${rootTile.boundingVolume.radius}`);
-            }
-            console.log(`   _distanceToCamera: ${rootTile._distanceToCamera}`);
-            console.log(`   frameState.cullingVolume: ${frameState.cullingVolume ? 'PRESENT' : 'MISSING'}`);
-            console.log(`   frameState.camera: ${frameState.camera ? 'PRESENT' : 'MISSING'}`);
-            if (frameState.camera) {
-                console.log(`   camera.position: (${frameState.camera.position.x.toFixed(0)}, ${frameState.camera.position.y.toFixed(0)}, ${frameState.camera.position.z.toFixed(0)})`);
-                console.log(`   camera.positionWC: (${frameState.camera.positionWC.x.toFixed(0)}, ${frameState.camera.positionWC.y.toFixed(0)}, ${frameState.camera.positionWC.z.toFixed(0)})`);
-            }
-            
-            // 🔍 MANUAL DISTANCE CALCULATION DEBUG
-            console.log(`🧮 MANUAL DISTANCE CALCULATION:`);
-            if (rootTile.boundingVolume && frameState.camera && frameState.camera.positionWC) {
-                try {
-                    // Manually call the distance calculation method
-                    const manualDistance = rootTile.boundingVolume.distanceToCamera(frameState);
-                    console.log(`   Manual distanceToCamera call: ${manualDistance}`);
-                    
-                    // Check if the boundingVolume has the distanceToCamera method
-                    console.log(`   boundingVolume.distanceToCamera method: ${typeof rootTile.boundingVolume.distanceToCamera}`);
-                    
-                    // Manually calculate distance using Cartesian3.distance
-                    if (rootTile.boundingVolume.center && rootTile.boundingVolume.radius) {
-                        const center = rootTile.boundingVolume.center;
-                        const cameraPos = frameState.camera.positionWC;
-                        const simpleDistance = Cartesian3.distance(center, cameraPos);
-                        const adjustedDistance = Math.max(0, simpleDistance - rootTile.boundingVolume.radius);
-                        console.log(`   Raw center-to-camera distance: ${simpleDistance.toFixed(0)}`);
-                        console.log(`   Distance minus radius: ${adjustedDistance.toFixed(0)}`);
-                        console.log(`   Bounding sphere radius: ${rootTile.boundingVolume.radius.toFixed(0)}`);
-                    }
-                } catch (error) {
-                    console.error(`   Manual distance calculation error:`, error);
-                }
-            }
-            
-            // Test updateVisibility manually
-            console.log(`🧪 TESTING: Manual updateVisibility call...`);
-            try {
-                rootTile.updateVisibility(frameState);
-                console.log(`   After updateVisibility: isVisible=${rootTile.isVisible}, _distanceToCamera=${rootTile._distanceToCamera}`);
-                console.log(`   _visibilityPlaneMask: 0x${rootTile._visibilityPlaneMask?.toString(16) || 'undefined'} (MASK_OUTSIDE=0xffffffff)`);
-                console.log(`   _visible property: ${rootTile._visible}`);
-                console.log(`   _inRequestVolume: ${rootTile._inRequestVolume}`);
-                console.log(`   isVisible getter: ${rootTile.isVisible} (= _visible && _inRequestVolume)`);
-                console.log(`   Plane mask !== MASK_OUTSIDE? ${rootTile._visibilityPlaneMask !== 0xffffffff}`);
-                
-                // DEBUG: Check first child's state since root tile uses child visibility
-                if (rootTile.children && rootTile.children.length > 0) {
-                    const firstChild = rootTile.children[0];
-                    console.log(`   First child: isVisible=${firstChild.isVisible}, _distanceToCamera=${firstChild._distanceToCamera}`);
-                    console.log(`   First child contentState: ${firstChild._contentState}, contentAvailable: ${firstChild.contentAvailable}`);
-                }
-            } catch (error) {
-                console.error(`   updateVisibility FAILED:`, error);
-            }
         }
         
         // CESIUM EXACT: Let BaseTraversal handle visibility naturally
@@ -495,99 +385,56 @@ export default class MinimalTileset {
         
         // BaseTraversal working - logging disabled
         
-        // ENHANCED GAPS DEBUG: Analyze both coverage and edge tile distribution
-        if (this._updatedVisibilityFrame % 120 === 0) { // Every 2 seconds for debugging edge issues
+        // CESIUM-STYLE: Viewport coverage analysis for edge gap debugging
+        if (this._updatedVisibilityFrame % 120 === 0) {
             let visibleTiles = 0;
             let edgeTiles = 0;
             let centerTiles = 0;
+            
+            const camera = frameState.camera;
             const frameWidth = frameState.context.drawingBufferWidth;
             const frameHeight = frameState.context.drawingBufferHeight;
+            const tanHalfFOV = Math.tan(camera.frustum.fov * 0.5);
+            const aspectRatio = frameWidth / frameHeight;
             
             this._selectedTiles.forEach(tile => {
                 if ((tile as any).isVisible && (tile as any).contentAvailable) {
                     visibleTiles++;
                     
-                    // CESIUM-STYLE: Check if tile bounding sphere reaches viewport edges
                     const boundingSphere = (tile as any).boundingSphere;
-                    if (boundingSphere && boundingSphere.center) {
-                        try {
-                            // CESIUM EXACT: Use proper screen space projection like SceneTransforms.wgs84ToWindowCoordinates
-                            const camera = frameState.camera;
-                            const center = boundingSphere.center;
-                            const radius = boundingSphere.radius;
+                    if (boundingSphere?.center) {
+                        const tileVector = Cartesian3.subtract(boundingSphere.center, camera.positionWC, new Cartesian3());
+                        const forward = Cartesian3.dot(tileVector, camera.directionWC);
+                        
+                        if (forward > camera.frustum.near) {
+                            const right = Cartesian3.dot(tileVector, camera.rightWC);
+                            const up = Cartesian3.dot(tileVector, camera.upWC);
                             
-                            // Convert to camera coordinates (same as Cesium's projection)
-                            const cameraPosition = camera.positionWC;
-                            const tileVector = center.clone();
-                            tileVector.subtract(cameraPosition);
+                            // Cesium-style screen space projection
+                            const projectedX = right / (forward * tanHalfFOV * aspectRatio);
+                            const projectedY = up / (forward * tanHalfFOV);
                             
-                            // Project using camera's view matrix (like Cesium SceneTransforms)
-                            const forward = tileVector.dot(camera.directionWC);
-                            const right = tileVector.dot(camera.rightWC);
-                            const up = tileVector.dot(camera.upWC);
+                            const screenX = (projectedX + 1.0) * 0.5 * frameWidth;
+                            const screenY = (1.0 - projectedY) * 0.5 * frameHeight;
+                            const screenRadius = (boundingSphere.radius * frameHeight) / (2.0 * forward * tanHalfFOV);
                             
-                            if (forward > camera.frustum.near) { // In front of near plane
-                                // CESIUM EXACT: Use frustum parameters for proper projection
-                                const frustum = camera.frustum;
-                                const tanHalfFOV = Math.tan(frustum.fov * 0.5);
-                                const aspectRatio = frameWidth / frameHeight;
-                                
-                                // Project to normalized device coordinates [-1, 1]
-                                const projectedX = right / (forward * tanHalfFOV * aspectRatio);
-                                const projectedY = up / (forward * tanHalfFOV);
-                                
-                                // Convert to screen coordinates [0, width/height]
-                                const screenX = (projectedX + 1.0) * 0.5 * frameWidth;
-                                const screenY = (1.0 - projectedY) * 0.5 * frameHeight; // Flip Y for screen coords
-                                
-                                // Calculate screen-space radius using perspective projection
-                                const screenRadius = (radius * frameHeight) / (2.0 * forward * tanHalfFOV);
-                                
-                                // DEBUG: Log projection details for first tile only
-                                if (edgeTiles === 0 && centerTiles === 0) {
-                                    console.log(`🔍 PROJECTION DEBUG: forward=${forward.toFixed(0)}, right=${right.toFixed(0)}, up=${up.toFixed(0)}`);
-                                    console.log(`   NDC: x=${projectedX.toFixed(2)}, y=${projectedY.toFixed(2)}`);
-                                    console.log(`   Screen: x=${screenX.toFixed(0)}, y=${screenY.toFixed(0)}, radius=${screenRadius.toFixed(0)}`);
-                                }
-                                
-                                // Check if bounding sphere extends to viewport edges
-                                const edgeBuffer = 10; // Small buffer in pixels
-                                const isNearEdge = (
-                                    screenX - screenRadius < edgeBuffer || 
-                                    screenX + screenRadius > frameWidth - edgeBuffer ||
-                                    screenY - screenRadius < edgeBuffer || 
-                                    screenY + screenRadius > frameHeight - edgeBuffer
-                                );
-                                
-                                if (isNearEdge) {
-                                    edgeTiles++;
-                                } else {
-                                    centerTiles++;
-                                }
-                            }
-                        } catch (error) {
-                            // Ignore projection errors
+                            // Check viewport edge proximity
+                            const edgeBuffer = 10;
+                            const isNearEdge = (
+                                screenX - screenRadius < edgeBuffer || 
+                                screenX + screenRadius > frameWidth - edgeBuffer ||
+                                screenY - screenRadius < edgeBuffer || 
+                                screenY + screenRadius > frameHeight - edgeBuffer
+                            );
+                            
+                            if (isNearEdge) edgeTiles++;
+                            else centerTiles++;
                         }
                     }
                 }
             });
             
             console.log(`🕳️ GAPS: ${visibleTiles}/${this._selectedTiles.length} tiles visible (${edgeTiles} near edges, ${centerTiles} in center)`);
-            
-            // DEBUG: Show why edge detection is failing
-            if (edgeTiles === 0 && centerTiles === 0 && visibleTiles > 0) {
-                console.log(`🔍 EDGE DETECTION DEBUG: All projection calculations failed! Checking first tile...`);
-                const firstTile = this._selectedTiles.find(tile => (tile as any).isVisible && (tile as any).contentAvailable);
-                if (firstTile) {
-                    const bs = (firstTile as any).boundingSphere;
-                    const camera = frameState.camera;
-                    console.log(`   Tile center: (${bs.center.x.toFixed(0)}, ${bs.center.y.toFixed(0)}, ${bs.center.z.toFixed(0)}), radius: ${bs.radius.toFixed(0)}`);
-                    console.log(`   Camera pos: (${camera.positionWC.x.toFixed(0)}, ${camera.positionWC.y.toFixed(0)}, ${camera.positionWC.z.toFixed(0)})`);
-                    console.log(`   FOV: ${camera.frustum.fov}, Frame: ${frameWidth}x${frameHeight}`);
-                }
-            } else if (edgeTiles === 0 && visibleTiles > 0) {
-                console.log(`⚠️ EDGE COVERAGE: No tiles near viewport edges - this could explain visible gaps!`);
-            }
         }
 
         // CESIUM EXACT: Process tiles like Cesium does
@@ -720,20 +567,7 @@ export default class MinimalTileset {
         
         // Log prioritization and processing results
         if (processedCount > 0 || noContentResourceCount > 0 || distanceCulledCount > 0) {
-            console.log(`🎯 PRIORITIZED PROCESSING: ${processedCount}/${this._requestedTiles.length} tiles loaded (${frameBudget} budget, ${distanceCulledCount} distance-culled)`);
             
-            // DEBUG: Show distance distribution in prioritized tiles
-            if (prioritizedTiles.length > 0) {
-                console.log(`🔍 DISTANCE DEBUG: Top ${Math.min(5, prioritizedTiles.length)} tiles by distance:`);
-                for (let i = 0; i < Math.min(5, prioritizedTiles.length); i++) {
-                    const tile = prioritizedTiles[i];
-                    const distance = (tile as any)._distanceToCamera || 0;
-                    const sse = (tile as any)._screenSpaceError || 0;
-                    const center = (tile as any).boundingSphere?.center;
-                    const centerDesc = center ? `(${center.x.toFixed(0)}, ${center.y.toFixed(0)}, ${center.z.toFixed(0)})` : 'no center';
-                    console.log(`   ${i+1}. Distance: ${distance.toFixed(0)}m, SSE: ${sse.toFixed(1)}, Center: ${centerDesc}`);
-                }
-            }
         }
     }
     
@@ -781,436 +615,14 @@ export default class MinimalTileset {
     
     // REMOVED: hideDeselectedTiles() - Non-Cesium logic removed, let Cesium handle tile visibility naturally
 
-    /**
-     * Debug traversal depth and children loading
-     */
-    private debugTraversalDepth(): void {
-        if (!this._root) return;
 
-        const rootChildren = (this._root as any).children || [];
-        console.log(`🌳 ROOT: ${rootChildren.length} children`);
 
-        let totalTilesInTree = 0;
-        let maxDepth = 0;
-
-        const countTilesRecursive = (tile: any, depth: number) => {
-            totalTilesInTree++;
-            maxDepth = Math.max(maxDepth, depth);
-
-            if (tile.children) {
-                for (const child of tile.children) {
-                    countTilesRecursive(child, depth + 1);
-                }
-            }
-        };
-
-        countTilesRecursive(this._root, 0);
-
-        // Count tiles by state at each depth level
-        const tilesAtDepth: {[key: number]: {total: number, ready: number, selected: number}} = {};
-        const analyzeTileByDepth = (tile: any, depth: number) => {
-            if (!tilesAtDepth[depth]) {
-                tilesAtDepth[depth] = {total: 0, ready: 0, selected: 0};
-            }
-            
-            tilesAtDepth[depth].total++;
-            
-            if ((tile as any)._contentState === Cesium3DTileContentState.READY) {
-                tilesAtDepth[depth].ready++;
-            }
-            
-            if (this._selectedTiles.includes(tile)) {
-                tilesAtDepth[depth].selected++;
-            }
-
-            if (tile.children) {
-                for (const child of tile.children) {
-                    analyzeTileByDepth(child, depth + 1);
-                }
-            }
-        };
-
-        analyzeTileByDepth(this._root, 0);
-
-        console.log(`🌳 HIERARCHY: ${totalTilesInTree} total tiles, max depth: ${maxDepth}`);
-        for (let d = 0; d <= maxDepth; d++) { // Show ALL levels
-            const stats = tilesAtDepth[d];
-            if (stats) {
-                // Add contentAvailable summary
-                let contentAvailableCount = 0;
-                const analyzeContentAvailable = (tile: any, depth: number) => {
-                    if (depth === d && tile.contentAvailable) {
-                        contentAvailableCount++;
-                    }
-                    if (tile.children) {
-                        for (const child of tile.children) {
-                            analyzeContentAvailable(child, depth + 1);
-                        }
-                    }
-                };
-                analyzeContentAvailable(this._root, 0);
-                
-                // console.log(`   Depth ${d}: ${stats.total} tiles (${stats.ready} ready, ${contentAvailableCount} contentAvailable, ${stats.selected} selected)`); // DISABLED - too spammy
-            }
-        }
-        
-        // Show BaseTraversal refinement summary
-        this.debugBaseTraversalRefinementSummary();
-    }
-
-    /**
-     * FOCUS: Debug only refinement issues - parent tiles not hiding
-     */
-    private debugRefinementIssues(): void {
-        console.log(`\n🔍 === REFINEMENT DEBUG (${this._selectedTiles.length} selected tiles) ===`);
-        
-        // Focus ONLY on selected parent tiles that should be hiding
-        let problematicParents = 0;
-        
-        for (const tile of this._selectedTiles) {
-            if (tile.children && tile.children.length > 0 && tile.refine === 1) { // REPLACE refinement
-                const readyChildren = tile.children.filter(child => 
-                    child.contentAvailable && child._contentState === 3);
-                
-                if (readyChildren.length > 0) {
-                    problematicParents++;
-                    console.log(`❌ SELECTED PARENT should hide: ${readyChildren.length}/${tile.children.length} ready children`);
-                    
-                    // Show WHY each ready child is not visible
-                    for (const child of readyChildren) {
-                        const reasons = [];
-                        if (!child._visible) reasons.push('_visible=false');
-                        if (!child._inRequestVolume) reasons.push('_inRequestVolume=false');
-                        if (child._visibilityPlaneMask === 0xffffffff) reasons.push('outside frustum');
-                        
-                        console.log(`      Child reasons: ${reasons.join(', ')}`);
-                    }
-                }
-            }
-        }
-        
-        console.log(`📊 Result: ${problematicParents} parent tiles should be hidden but aren't`);
-    }
-
-    /**
-     * Debug Screen Space Error calculations to understand local vs global tile selection
-     */
-    private debugScreenSpaceError(frameState: any): void {
-        console.log(`\n🎯 === SCREEN SPACE ERROR DEBUG ===`);
-        
-        if (!this._root || !frameState.camera) {
-            console.log(`❌ Missing root tile or camera`);
-            return;
-        }
-
-        console.log(`📐 SSE Threshold: maximumScreenSpaceError=${this.maximumScreenSpaceError}, memoryAdjusted=${this.memoryAdjustedScreenSpaceError}`);
-        console.log(`📍 Camera position: (${frameState.camera.positionWC.x.toFixed(0)}, ${frameState.camera.positionWC.y.toFixed(0)}, ${frameState.camera.positionWC.z.toFixed(0)})`);
-
-        // Collect tiles from different depths for analysis
-        const tilesToAnalyze: any[] = [this._root];
-        if ((this._root as any).children) {
-            tilesToAnalyze.push(...(this._root as any).children.slice(0, 3));
-            // Add some grandchildren if available
-            for (const child of (this._root as any).children.slice(0, 2)) {
-                if (child.children && child.children.length > 0) {
-                    tilesToAnalyze.push(child.children[0]);
-                }
-            }
-        }
-
-        console.log(`\n📊 ANALYZING ${tilesToAnalyze.length} TILES:`);
-        
-        for (let i = 0; i < tilesToAnalyze.length; i++) {
-            const tile = tilesToAnalyze[i] as any;
-            const depth = tile._depth || 0;
-            const geometricError = tile.geometricError || 0;
-            const distance = tile._distanceToCamera || 'undefined';
-            const sse = tile._screenSpaceError || 'undefined';
-            
-            console.log(`  Tile ${i}: depth=${depth}, geomError=${geometricError.toFixed(0)}, distance=${distance}, SSE=${sse}`);
-            console.log(`    contentAvailable=${tile.contentAvailable}, isVisible=${tile.isVisible}`);
-        }
-    }
-
-    /**
-     * Debug frustum culling to understand which tiles are being culled
-     */
-    private debugFrustumCulling(frameState: any): void {
-        console.log(`\n🎯 === FRUSTUM CULLING DEBUG ===`);
-        
-        if (!this._root || !frameState.cullingVolume) {
-            console.log(`❌ Missing root tile or culling volume`);
-            return;
-        }
-        
-        const testTiles = [this._root];
-        if ((this._root as any).children) {
-            testTiles.push(...(this._root as any).children.slice(0, 3));
-        }
-        
-        console.log(`\n📊 TESTING ${testTiles.length} TILES AGAINST FRUSTUM:`);
-        
-        for (let i = 0; i < testTiles.length; i++) {
-            const tile = testTiles[i] as any;
-            const visibility = tile.contentVisibility(frameState);
-            const visibilityNames = ['OUTSIDE', 'INTERSECTING', 'INSIDE'];
-            
-            console.log(`  Tile ${i}: ${visibilityNames[visibility] || 'UNKNOWN'} (${visibility})`);
-            console.log(`    isVisible=${tile.isVisible}, _visible=${tile._visible}, _inRequestVolume=${tile._inRequestVolume}`);
-            
-            // DEBUG: Check if our bounding sphere fix worked
-            if (tile.boundingSphere && tile.boundingSphere.center) {
-                const center = tile.boundingSphere.center;
-                console.log(`    boundingSphere center: (${center.x.toFixed(0)}, ${center.y.toFixed(0)}, ${center.z.toFixed(0)}), radius: ${tile.boundingSphere.radius.toFixed(0)}`);
-                
-                // DEBUG: Try calling updateTransform on this specific tile to see if it fixes coordinates
-                try {
-                    // Call tileset.boundingSphere to ensure root transform is updated first
-                    this.boundingSphere; 
-                    
-                    // Then try updating this specific tile's transform
-                    if (tile.parent) {
-                        const parentComputedTransform = (tile.parent as any).computedTransform || this._modelMatrix;
-                        (tile as any).updateTransform(parentComputedTransform);
-                    } else {
-                        (tile as any).updateTransform(this._modelMatrix);
-                    }
-                    
-                    // Check if this fixed the coordinates
-                    const newCenter = tile.boundingSphere.center;
-                    if (newCenter.x !== 0 || newCenter.y !== 0 || newCenter.z !== 0) {
-                        console.log(`    ✅ AFTER updateTransform: center: (${newCenter.x.toFixed(0)}, ${newCenter.y.toFixed(0)}, ${newCenter.z.toFixed(0)})`);
-                    } else {
-                        console.log(`    ❌ AFTER updateTransform: still (0,0,0)`);
-                    }
-                } catch (error) {
-                    console.log(`    ❌ Error calling updateTransform: ${error}`);
-                }
-            } else {
-                console.log(`    boundingSphere: ${tile.boundingSphere ? 'exists but no center' : 'missing'}`);
-            }
-        }
-    }
-
-    /**
-     * Debug tile distances to understand distance calculations
-     */
-    private debugTileDistances(frameState: any): void {
-        console.log(`\n📏 === TILE DISTANCES DEBUG ===`);
-        
-        if (!this._root || !frameState.camera) {
-            console.log(`❌ Missing root tile or camera`);
-            return;
-        }
-        
-        const testTiles = [this._root];
-        if ((this._root as any).children) {
-            testTiles.push(...(this._root as any).children.slice(0, 3));
-        }
-        
-        console.log(`\n📊 DISTANCE ANALYSIS FOR ${testTiles.length} TILES:`);
-        
-        for (let i = 0; i < testTiles.length; i++) {
-            const tile = testTiles[i] as any;
-            const distance = tile._distanceToCamera;
-            const boundingSphere = tile.boundingSphere;
-            
-            console.log(`  Tile ${i}: distance=${distance}`);
-            if (boundingSphere) {
-                console.log(`    boundingSphere: center=(${boundingSphere.center.x.toFixed(0)}, ${boundingSphere.center.y.toFixed(0)}, ${boundingSphere.center.z.toFixed(0)}), radius=${boundingSphere.radius.toFixed(0)}`);
-            }
-        }
-    }
-
-    /**
-     * Debug coordinate consistency between Cesium and Babylon
-     */
-    private debugCoordinateConsistency(frameState: any): void {
-        console.log(`\n🌍 === COORDINATE CONSISTENCY DEBUG ===`);
-        
-        if (!frameState.camera) {
-            console.log(`❌ Missing camera`);
-            return;
-        }
-        
-        const camera = frameState.camera;
-        console.log(`📍 Camera Cesium position: (${camera.positionWC.x.toFixed(0)}, ${camera.positionWC.y.toFixed(0)}, ${camera.positionWC.z.toFixed(0)})`);
-        console.log(`📍 Camera Cesium direction: (${camera.directionWC.x.toFixed(3)}, ${camera.directionWC.y.toFixed(3)}, ${camera.directionWC.z.toFixed(3)})`);
-        
-        if (this._root) {
-            const rootBounds = (this._root as any).boundingVolume;
-            if (rootBounds && rootBounds.center) {
-                console.log(`🎯 Root tile center: (${rootBounds.center.x.toFixed(0)}, ${rootBounds.center.y.toFixed(0)}, ${rootBounds.center.z.toFixed(0)})`);
-            }
-        }
-    }
-
-    /**
-     * Debug BaseTraversal refinement summary
-     */
-    private debugBaseTraversalRefinementSummary(): void {
-        console.log(`\n🔄 === BASE TRAVERSAL REFINEMENT SUMMARY ===`);
-        console.log(`Selected tiles: ${this._selectedTiles.length}`);
-        console.log(`Requested tiles: ${this._requestedTiles.length}`);
-        console.log(`Empty tiles: ${this._emptyTiles.length}`);
-        
-        if (this._selectedTiles.length > 0) {
-            console.log(`\n📊 SELECTED TILES BREAKDOWN:`);
-            const depthCounts: {[key: number]: number} = {};
-            
-            for (const tile of this._selectedTiles) {
-                const depth = (tile as any)._depth || 0;
-                depthCounts[depth] = (depthCounts[depth] || 0) + 1;
-            }
-            
-            Object.entries(depthCounts).forEach(([depth, count]) => {
-                console.log(`  Depth ${depth}: ${count} tiles`);
-            });
-        }
-    }
-
-    /**
-     * Debug child visibility issue that prevents REPLACE refinement
-     */
-    private debugChildVisibilityIssue(frameState: any): void {
-        console.log(`\n🔍 === CHILD VISIBILITY ISSUE DEBUG ===`);
-        
-        if (!this._root) {
-            console.log(`❌ No root tile available`);
-            return;
-        }
-        
-        // Find tiles with ready children that should be replacing them
-        const problematicTiles: any[] = [];
-        
-        const checkTileFamily = (tile: any, depth = 0) => {
-            if (depth > 2) return; // Don't go too deep
-            
-            if (tile.children && tile.children.length > 0) {
-                const readyChildren = tile.children.filter((child: any) => child.contentAvailable);
-                const visibleChildren = tile.children.filter((child: any) => child.isVisible);
-                
-                if (readyChildren.length > 0 && visibleChildren.length === 0 && tile.refine === Cesium3DTileRefine.REPLACE) {
-                    problematicTiles.push({
-                        tile,
-                        readyChildren,
-                        visibleChildren,
-                        tileVisible: tile.isVisible
-                    });
-                }
-                
-                // Recurse to children
-                for (const child of tile.children) {
-                    checkTileFamily(child, depth + 1);
-                }
-            }
-        };
-        
-        checkTileFamily(this._root);
-        
-        console.log(`\n🎯 FOUND ${problematicTiles.length} TILES WITH INVISIBLE READY CHILDREN:`);
-        
-        for (let i = 0; i < problematicTiles.length; i++) {
-            const { tile, readyChildren, visibleChildren, tileVisible } = problematicTiles[i];
-            
-            console.log(`\n  📦 TILE [${i}] (parent visible: ${tileVisible}):`);
-            console.log(`     Ready children: ${readyChildren.length}/${tile.children.length}`);
-            console.log(`     Visible children: ${visibleChildren.length}/${tile.children.length}`);
-            
-            // Analyze why children aren't visible
-            for (let j = 0; j < Math.min(readyChildren.length, 3); j++) {
-                const child = readyChildren[j];
-                try {
-                    // Force update child visibility
-                    (child as any).updateVisibility(frameState);
-                    
-                    const visibility = child.contentVisibility(frameState);
-                    const distance = child._distanceToCamera;
-                    const sse = child.getScreenSpaceError(frameState, true);
-                    
-                    console.log(`       Child [${j}]: visible=${child.isVisible}, contentVisibility=${visibility}`);
-                    console.log(`         distance=${distance?.toFixed(0) || 'undefined'}, SSE=${sse?.toFixed(1) || 'undefined'}`);
-                    
-                    // Compare parent vs child visibility
-                    const parentVisibility = tile.contentVisibility(frameState);
-                    console.log(`         Parent visibility=${parentVisibility}, Child visibility=${visibility}`);
-                    
-                    if (visibility === 0) { // OUTSIDE
-                        console.log(`         ❌ Child marked OUTSIDE frustum - this prevents REPLACE refinement!`);
-                    } else if (visibility === 1) { // INTERSECTING
-                        console.log(`         ✅ Child intersects frustum but isVisible=${child.isVisible}`);
-                        if (!child.isVisible) {
-                            console.log(`         ⚠️ Child should be visible but isVisible=false - check _inRequestVolume`);
-                            console.log(`           _inRequestVolume=${child._inRequestVolume}, _visible=${child._visible}`);
-                        }
-                    }
-                    
-                } catch (error) {
-                    console.log(`       Child [${j}]: ❌ Error analyzing: ${error}`);
-                }
-            }
-        }
-        
-        if (problematicTiles.length > 0) {
-            console.log(`\n💡 DIAGNOSIS: Children are contentAvailable but not isVisible`);
-            console.log(`   This prevents BaseTraversal from setting refines=true (line 153-155)`);
-            console.log(`   When refines=false, parent tiles can't be replaced by children`);
-            console.log(`   Need to understand why children fail visibility checks`);
-        }
-        
-        console.log(`🔍 === END CHILD VISIBILITY DEBUG ===\n`);
-    }
-
-    // REMOVED: debugScreenSpaceError() - Non-Cesium debug method removed
-
-    // REMOVED: debugFrustumCulling() - Non-Cesium debug method removed
-
-    // REMOVED: debugTileDistances() - Non-Cesium debug method removed
-
-    // REMOVED: debugCoordinateConsistency() - Non-Cesium debug method removed
-
-    // REMOVED: debugBaseTraversalRefinementSummary() - Non-Cesium debug method removed
-
-    /**
-     * Debug REPLACE refinement to see why parent tiles aren't being hidden
-     */
-    private debugReplaceRefinement(): void {
-        const selectedParentsWithUnloadedChildren = this._selectedTiles.filter((tile: any) => {
-            return tile.refine === 1 && // REPLACE
-                   tile.children && 
-                   tile.children.length > 0 &&
-                   tile.children.some((child: any) => child._contentState === 0); // Has UNLOADED children
-        });
-        
-        if (selectedParentsWithUnloadedChildren.length > 0) {
-            console.log(`🔄 ISSUE: ${selectedParentsWithUnloadedChildren.length} selected parents have UNLOADED children`);
-            
-            // Show first problematic parent
-            const tile = selectedParentsWithUnloadedChildren[0] as any;
-            const unloadedChildren = tile.children.filter((child: any) => child._contentState === 0);
-            const readyChildren = tile.children.filter((child: any) => child._contentState === 3);
-            
-            console.log(`🔄 Parent: _refines=${tile._refines}, loadSiblings=${this.loadSiblings}`);
-            console.log(`   ${readyChildren.length} ready children, ${unloadedChildren.length} UNLOADED children`);
-            
-            // Show key properties of unloaded children
-            unloadedChildren.slice(0, 2).forEach((child: any, idx: number) => {
-                console.log(`   Child ${idx}: isVisible=${child.isVisible}, _foveatedFactor=${child._foveatedFactor}`);
-            });
-            
-            // CESIUM DEBUG: Check SSE calculation details
-            console.log(`🔄 Parent SSE: ${tile._screenSpaceError}, memoryAdjustedSSE: ${this.memoryAdjustedScreenSpaceError} (private: ${this._memoryAdjustedScreenSpaceError}, max: ${this.maximumScreenSpaceError})`);
-            console.log(`   geometricError: ${tile.geometricError}, distanceToCamera: ${tile._distanceToCamera}`);
-            console.log(`   canTraverse = ${tile._screenSpaceError > this.memoryAdjustedScreenSpaceError}`);
-        }
-    }
     
     /**
      * Handle proper tile unloading when Cesium unloads tiles
      * This disposes of Babylon meshes for tiles that are no longer needed
      */
     private _handleTileUnloading(unloadedTileIds: string[]): void {
-        console.log(`🗑️ Handling unload of ${unloadedTileIds.length} tiles:`, unloadedTileIds);
         
         // Find tiles that have content and dispose their Babylon meshes
         for (const tileId of unloadedTileIds) {
@@ -1220,7 +632,6 @@ export default class MinimalTileset {
             
             if (tileToUnload && (tileToUnload as any)._content) {
                 const content = (tileToUnload as any)._content;
-                console.log(`🧹 Disposing Babylon content for tile ${tileId}`);
                 
                 // Hide the content immediately
                 if (content.visible !== undefined) {
@@ -1231,7 +642,6 @@ export default class MinimalTileset {
                 if (typeof content.destroy === 'function') {
                     try {
                         content.destroy();
-                        console.log(`✅ Successfully disposed tile content for ${tileId}`);
                     } catch (error) {
                         console.error(`❌ Error disposing tile content for ${tileId}:`, error);
                     }
