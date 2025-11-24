@@ -2,14 +2,17 @@
  * BABYLON DERIVED: Traverses a {@link Cesium3DTileset} to determine which tiles to load and render.
  * DERIVED FROM: @cesium/engine/Source/Scene/Cesium3DTilesetTraversal.js
  * 
- * BABYLON DEVIATIONS FROM CESIUM:
- * 1. Added horizon culling logic for 3D tiles (not in original Cesium)
- * 2. Added camera-inside-tile detection to prevent incorrect horizon culling
- * 3. Added coordinate system validation and debugging
- * 4. Modified to work with Babylon.js coordinate system requirements
+ * WHY THIS FILE IS DERIVED (not extracted):
+ * 1. Added extensive debugging/error handling for infinite SSE troubleshooting
+ * 2. Added horizon culling logic for 3D tiles (not in original Cesium)
+ * 3. Added camera-inside-tile detection to prevent incorrect horizon culling
+ * 4. Added coordinate system validation and transform debugging
+ * 5. Added try/catch blocks with detailed error analysis for distance calculations
+ * 6. Modified to work with Babylon.js coordinate system requirements
  * 
- * CESIUM COMPLIANCE: All other traversal logic follows Cesium's exact patterns.
- * The core tile selection algorithm remains identical to Cesium's source.
+ * CESIUM COMPLIANCE: All core traversal logic follows Cesium's exact patterns.
+ * The tile selection algorithm remains identical to Cesium's source.
+ * Only debugging, error handling, and Babylon-specific adaptations are added.
  *
  * @alias Cesium3DTilesetTraversal
  * @constructor

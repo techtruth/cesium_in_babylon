@@ -53,22 +53,15 @@ Cesium3DTilesetBaseTraversal.selectTiles = function (tileset: any, frameState: a
   Cesium3DTilesetTraversal.updateTile(root, frameState);
 
   if (!root.isVisible) {
-    console.log(`🚫 ROOT TILE NOT VISIBLE - No traversal will happen`);
     return;
   }
 
-  const rootSSE = root.getScreenSpaceError(frameState, true);
-  const threshold = tileset.memoryAdjustedScreenSpaceError;
-  
-  if (rootSSE <= threshold) {
-    console.log(`🚫 ROOT SSE TOO SMALL - SSE=${rootSSE.toFixed(1)}, threshold=${threshold}, no traversal needed`);
+  if (
+    root.getScreenSpaceError(frameState, true) <=
+    tileset.memoryAdjustedScreenSpaceError
+  ) {
     return;
-  } else {
-    console.log(`✅ ROOT TILE PASSES - visible=${root.isVisible}, SSE=${rootSSE.toFixed(1)} > threshold=${threshold}`);
   }
-  
-  // DEBUG: Check if any tiles have reasonable SSE values for NYC area
-  console.log(`🔍 SSE DEBUG: Camera at NYC, root SSE=${rootSSE.toFixed(1)}, looking for nearby tiles...`);
 
   executeTraversal(root, frameState);
 
@@ -155,6 +148,7 @@ function updateAndPushChildren(tile: any, stack: any, frameState: any): boolean 
         childRefines = child.contentAvailable;
       }
       
+      
       refines = refines && childRefines;
     }
   }
@@ -162,6 +156,7 @@ function updateAndPushChildren(tile: any, stack: any, frameState: any): boolean 
   if (!anyChildrenVisible) {
     refines = false;
   }
+
 
   if (minIndex !== -1 && replace) {
     // An ancestor will hold the _foveatedFactor and _distanceToCamera for descendants between itself and its highest priority descendant. Siblings of a min children along the way use this ancestor as their priority holder as well.

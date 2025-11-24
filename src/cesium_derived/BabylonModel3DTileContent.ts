@@ -355,9 +355,11 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
         // Update transform if needed (matches Cesium's update pattern)
         this.updateTransform();
 
-        // CESIUM EXACT: Don't unconditionally set show=true here
-        // Visibility is controlled by BabylonTileContent.update() based on tileset._selectedTiles
-        // which respects Cesium's horizon culling and tile selection logic
+        // CESIUM EXACT: Set show=true when tile is selected and update() is called
+        // This is the key to BaseTraversal refinement: only selected tiles become visible
+        if (!this._visible) {
+            this.show = true;
+        }
     }
     
     /**
@@ -538,10 +540,18 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
             if (this._transformNode) {
                 this._transformNode.isVisible = false;
             }
+            let hiddenMeshCount = 0;
             for (const mesh of this._meshes) {
                 if (mesh) {
                     mesh.isVisible = false;
+                    hiddenMeshCount++;
                 }
+            }
+            
+            // DEBUG: Log when meshes are actually hidden
+            if (hiddenMeshCount > 0 && BabylonModel3DTileContent._meshVisibilityLogCount < 10) {
+                BabylonModel3DTileContent._meshVisibilityLogCount++;
+                console.log(`👻 MESHES HIDDEN: ${hiddenMeshCount} meshes set to isVisible=false (show=${this.show}, ready=${this._ready})`);
             }
         }
     }

@@ -299,11 +299,39 @@ window.addEventListener('DOMContentLoaded', async () => {
         scene.render();
     });
 
-    // Handle window resize
-    window.addEventListener("resize", () => {
+    // Handle window resize and dev console open/close
+    const handleResize = () => {
         updateCanvasSize();  // Update canvas dimensions first
         engine.resize();     // Then resize the engine
+        
+        // Handle frustum update and visualization recreation
+        if (integration) {
+            integration.handleCanvasResize();
+        }
+    };
+    
+    window.addEventListener("resize", handleResize);
+    
+    // Watch for canvas size changes (dev console open/close, responsive design)
+    const resizeObserver = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+            if (entry.target === canvas) {
+                console.log(`📺 Canvas resized: ${entry.contentRect.width}x${entry.contentRect.height}`);
+                handleResize();
+            } else if (entry.target === document.body) {
+                console.log(`📺 Viewport resized: ${entry.contentRect.width}x${entry.contentRect.height} (dev console opened/closed?)`);
+                // Delay slightly to let the canvas update
+                setTimeout(() => {
+                    handleResize();
+                }, 10);
+            }
+        }
     });
+    
+    resizeObserver.observe(canvas);
+    
+    // Also observe the document body for viewport changes (dev console open/close)
+    resizeObserver.observe(document.body);
     
     // Integration ready - debug utilities available on window.integration and window.ionAuth
     (window as any).integration = integration;

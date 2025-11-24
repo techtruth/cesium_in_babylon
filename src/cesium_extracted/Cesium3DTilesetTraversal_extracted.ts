@@ -190,81 +190,16 @@ function isOnScreenLongEnough(tile: any, frameState: any): boolean {
  * @param {any} frameState
  */
 Cesium3DTilesetTraversal.updateTile = function (tile: any, frameState: any): void {
-  try {
-    updateTileVisibility(tile, frameState);
-    tile.updateExpiration();
+  updateTileVisibility(tile, frameState);
+  tile.updateExpiration();
 
-    tile._wasMinPriorityChild = false;
-    tile._priorityHolder = tile;
-    updateMinimumMaximumPriority(tile);
+  tile._wasMinPriorityChild = false;
+  tile._priorityHolder = tile;
+  updateMinimumMaximumPriority(tile);
 
-    // SkipLOD
-    tile._shouldSelect = false;
-    tile._finalResolution = true;
-  } catch (error) {
-    console.error('❌ ERROR in updateTile for tile:', tile.id || 'unknown', error);
-    console.error('Tile state before error:', {
-      geometricError: tile.geometricError,
-      boundingSphere: tile.boundingSphere,
-      _distanceToCamera: tile._distanceToCamera,
-      _screenSpaceError: tile._screenSpaceError,
-      isVisible: tile.isVisible
-    });
-    
-    // DEBUG: Deep dive into distance calculation for "scale must be a finite number" error
-    if (error.message.includes('scale must be a finite number')) {
-      console.error('🔍 DEEP DEBUG - Scale Error Analysis:');
-      
-      // Check bounding sphere details
-      if (tile.boundingSphere) {
-        const bs = tile.boundingSphere;
-        console.error('📍 Bounding sphere:', {
-          center: bs.center ? `(${bs.center.x?.toFixed(0)}, ${bs.center.y?.toFixed(0)}, ${bs.center.z?.toFixed(0)})` : 'undefined',
-          radius: bs.radius,
-          centerMagnitude: bs.center ? Math.sqrt(bs.center.x*bs.center.x + bs.center.y*bs.center.y + bs.center.z*bs.center.z).toFixed(0) : 'N/A'
-        });
-      }
-      
-      // Test distance calculation manually
-      try {
-        console.error('🧮 Manual distance calculation test:');
-        const frameState = arguments[1]; // Get frameState from function arguments
-        
-        if (frameState?.camera?.positionWC && tile.boundingSphere?.center) {
-          const cameraPos = frameState.camera.positionWC;
-          const sphereCenter = tile.boundingSphere.center;
-          
-          const dx = cameraPos.x - sphereCenter.x;
-          const dy = cameraPos.y - sphereCenter.y; 
-          const dz = cameraPos.z - sphereCenter.z;
-          const distance = Math.sqrt(dx*dx + dy*dy + dz*dz);
-          
-          console.error('   Camera position:', `(${cameraPos.x?.toFixed(0)}, ${cameraPos.y?.toFixed(0)}, ${cameraPos.z?.toFixed(0)})`);
-          console.error('   Sphere center:', `(${sphereCenter.x?.toFixed(0)}, ${sphereCenter.y?.toFixed(0)}, ${sphereCenter.z?.toFixed(0)})`);
-          console.error('   Manual distance calculation:', distance?.toFixed(0));
-          console.error('   Distance - radius (surface distance):', (distance - tile.boundingSphere.radius)?.toFixed(0));
-        } else {
-          console.error('   Missing data for distance calculation:', {
-            hasCameraPos: !!frameState?.camera?.positionWC,
-            hasSphereCenter: !!tile.boundingSphere?.center
-          });
-        }
-        
-        // Try calling distanceToTile directly
-        if (tile.distanceToTile && typeof tile.distanceToTile === 'function') {
-          const tileDistance = tile.distanceToTile(frameState);
-          console.error('   tile.distanceToTile() result:', tileDistance);
-        } else {
-          console.error('   distanceToTile function not available');
-        }
-        
-      } catch (distErr) {
-        console.error('   Error in manual distance calculation:', distErr);
-      }
-    }
-    
-    throw error;
-  }
+  // SkipLOD
+  tile._shouldSelect = false;
+  tile._finalResolution = true;
 };
 
 /**
@@ -273,87 +208,8 @@ Cesium3DTilesetTraversal.updateTile = function (tile: any, frameState: any): voi
  * @param {any} frameState
  */
 function updateTileVisibility(tile: any, frameState: any): void {
-  // DEBUG: Track visibility pipeline decisions
-  const shouldDebugVisibility = tile._screenSpaceError > tile.tileset.memoryAdjustedScreenSpaceError;
-  const tileDesc = `depth=${tile._depth}, SSE=${tile._screenSpaceError?.toFixed(1)}, geomError=${tile.geometricError?.toFixed(0)}`;
-  
-  // Store initial visibility state
-  const visibilityBefore = tile.isVisible;
-  
   tile.updateVisibility(frameState);
-  
-  // HORIZON CULLING: Add the same horizon culling that Cesium uses for terrain tiles
-  // This prevents 3D tiles on the far side of Earth from being visible
-  if (frameState.mode === 3 && // SceneMode.SCENE3D
-      frameState.ellipsoidalOccluder && 
-      tile.isVisible) {
-    try {
-      // CRITICAL: Ensure tileset transforms are updated before accessing tile bounding spheres
-      // This triggers the updateTransform() call that fixes coordinate systems
-      if (tile.tileset) {
-        // Access tileset.boundingSphere to trigger updateTransform
-        if (tile.tileset && tile.tileset.boundingSphere) {
-          tile.tileset.boundingSphere;
-        }
-      }
-      
-      // ADDITIONAL: Also ensure this specific tile has its transform updated
-      // In case the tileset's boundingSphere doesn't propagate to all children
-      if (tile.updateTransform && tile.tileset && tile.tileset._modelMatrix) {
-        try {
-          if (tile.parent && tile.parent.computedTransform) {
-            tile.updateTransform(tile.parent.computedTransform);
-          } else {
-            tile.updateTransform(tile.tileset._modelMatrix);
-          }
-        } catch (error) {
-          // Ignore errors - some tiles might not support updateTransform
-        }
-      }
-      
-      // Get tile center point for horizon testing (should now have proper world coordinates)
-      const boundingSphere = tile.boundingSphere;
-      if (boundingSphere && boundingSphere.center) {
-        // CRITICAL FIX: Don't horizon cull tiles that contain the camera!
-        // For large tiles (like root tiles covering entire Earth), the camera is inside the bounding sphere
-        const cameraPos = frameState.camera.positionWC;
-        const tileCenter = boundingSphere.center;
-        const tileRadius = boundingSphere.radius;
-        
-        // Calculate distance from camera to tile center
-        const distanceToTileCenter = Cartesian3.distance(cameraPos, tileCenter);
-        
-        // If camera is inside tile's bounding sphere, don't horizon cull
-        if (distanceToTileCenter <= tileRadius) {
-          return; // Skip horizon culling for tiles containing the camera
-        }
-        
-        // For tiles NOT containing the camera, proceed with normal horizon culling
-        const ellipsoid = Ellipsoid.WGS84; // Use imported Ellipsoid from cesium
-        const occludeePointInScaledSpace = ellipsoid.transformPositionToScaledSpace(boundingSphere.center);
-        
-        // Use horizon test - start with simpler method for 3D tiles
-        const isVisible = frameState.ellipsoidalOccluder.isScaledSpacePointVisible(
-            occludeePointInScaledSpace
-        );
-        
-        // Debug output disabled
-        
-        if (!isVisible) {
-          // Tile is behind Earth's horizon - mark as not visible
-          tile._visible = false;
-          
-          // Horizon culling debug disabled
-          return; // Early exit - tile is horizon culled
-        }
-      }
-    } catch (error) {
-      // If horizon culling fails, continue with normal processing
-      console.warn('Horizon culling check failed:', error);
-    }
-  }
-  
-  // MINIMAL LOGGING: Disable verbose visibility logging
+
   if (!tile.isVisible) {
     return;
   }
@@ -364,17 +220,12 @@ function updateTileVisibility(tile: any, frameState: any): void {
     // The root tile may be culled by the children bounds optimization in which
     // case this tile should also be culled.
     const child = tile.children[0];
-    // Delegating to first child (no logging needed)
     updateTileVisibility(child, frameState);
     tile._visible = child._visible;
     return;
   }
 
-  const meetsSSEEarly = meetsScreenSpaceErrorEarly(tile, frameState);
-  if (meetsSSEEarly) {
-    if (shouldDebugVisibility) {
-      console.log(`   ⚡ Tile (${tileDesc}) marked invisible by meetsScreenSpaceErrorEarly`);
-    }
+  if (meetsScreenSpaceErrorEarly(tile, frameState)) {
     tile._visible = false;
     return;
   }
@@ -385,21 +236,12 @@ function updateTileVisibility(tile: any, frameState: any): void {
     tile._optimChildrenWithinParent ===
     Cesium3DTileOptimizationHint.USE_OPTIMIZATION;
   if (replace && useOptimization && hasChildren) {
-    const childrenVisibilityResult = anyChildrenVisible(tile, frameState);
-    if (!childrenVisibilityResult) {
-      if (shouldDebugVisibility) {
-        console.log(`   👥 Tile (${tileDesc}) marked invisible by children optimization - no children visible (replace=${replace}, useOptim=${useOptimization})`);
-      }
+    if (!anyChildrenVisible(tile, frameState)) {
       ++tile.tileset._statistics.numberOfTilesCulledWithChildrenUnion;
       tile._visible = false;
       return;
-    } else if (shouldDebugVisibility) {
-      console.log(`   ✅ Tile (${tileDesc}) stays visible - some children are visible`);
     }
   }
-  
-  // REDUCED LOGGING: Only show visibility changes, not final states
-  // (Final visibility states were too verbose)
 }
 
 /**
@@ -410,31 +252,20 @@ function updateTileVisibility(tile: any, frameState: any): void {
  */
 function meetsScreenSpaceErrorEarly(tile: any, frameState: any): boolean {
   const { parent, tileset } = tile;
-  
-  // Early exit conditions
-  if (!defined(parent)) {
-    return false;
-  }
-  if (parent.hasTilesetContent || parent.hasImplicitContent) {
-    return false;
-  }
-  if (parent.refine !== Cesium3DTileRefine.ADD) {
+  if (
+    !defined(parent) ||
+    parent.hasTilesetContent ||
+    parent.hasImplicitContent ||
+    parent.refine !== Cesium3DTileRefine.ADD
+  ) {
     return false;
   }
 
   // Use parent's geometric error with child's box to see if the tile already meet the SSE
-  const tileSSE = tile.getScreenSpaceError(frameState, true);
-  const threshold = tileset.memoryAdjustedScreenSpaceError;
-  const meetsEarly = tileSSE <= threshold;
-  
-  // DEBUG: Log SSE early culling decisions for high SSE tiles
-  const shouldDebug = tile._screenSpaceError > tileset.memoryAdjustedScreenSpaceError;
-  if (shouldDebug && meetsEarly) {
-    const tileDesc = `depth=${tile._depth}, geomError=${tile.geometricError?.toFixed(0)}`;
-    console.log(`   ⚡ meetsScreenSpaceErrorEarly: tile (${tileDesc}) SSE=${tileSSE?.toFixed(1)} <= ${threshold} (parent refine=ADD)`);
-  }
-  
-  return meetsEarly;
+  return (
+    tile.getScreenSpaceError(frameState, true) <=
+    tileset.memoryAdjustedScreenSpaceError
+  );
 }
 
 /**
@@ -446,38 +277,11 @@ function meetsScreenSpaceErrorEarly(tile: any, frameState: any): boolean {
 function anyChildrenVisible(tile: any, frameState: any): boolean {
   let anyVisible = false;
   const children = tile.children;
-  
-  // DEBUG: Track child visibility in detail for high SSE parents
-  const shouldDebug = tile._screenSpaceError > tile.tileset.memoryAdjustedScreenSpaceError;
-  const parentDesc = `parent depth=${tile._depth}, SSE=${tile._screenSpaceError?.toFixed(1)}`;
-  
-  if (shouldDebug) {
-    console.log(`   👥 anyChildrenVisible check for ${parentDesc} with ${children.length} children:`);
-  }
-  
   for (let i = 0; i < children.length; ++i) {
     const child = children[i];
-    const visibilityBefore = child.isVisible;
-    
     child.updateVisibility(frameState);
-    
-    const visibilityAfter = child.isVisible;
     anyVisible = anyVisible || child.isVisible;
-    
-    if (shouldDebug) {
-      const childDesc = `child ${i} (depth=${child._depth}, SSE=${child._screenSpaceError?.toFixed(1)}, contentAvailable=${child.contentAvailable})`;
-      if (visibilityBefore !== visibilityAfter) {
-        console.log(`     📍 ${childDesc}: updateVisibility changed ${visibilityBefore} → ${visibilityAfter}`);
-      } else {
-        console.log(`     ${visibilityAfter ? '✅' : '⛔'} ${childDesc}: visibility=${visibilityAfter}`);
-      }
-    }
   }
-  
-  if (shouldDebug) {
-    console.log(`   👥 anyChildrenVisible result for ${parentDesc}: ${anyVisible}`);
-  }
-  
   return anyVisible;
 }
 

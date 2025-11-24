@@ -1,5 +1,5 @@
 import { Scene as BabylonScene, Camera, Engine, MeshBuilder, StandardMaterial, Color3, Vector3 } from '@babylonjs/core';
-import { Cartesian3, Cartesian2, Plane, PerspectiveFrustum, Ellipsoid, BoundingSphere, Matrix4, SceneMode, CullingVolume, Intersect, Occluder } from 'cesium';
+import { Cartesian3, Cartesian2, Plane, PerspectiveFrustum, Ellipsoid, BoundingSphere, Matrix4, SceneMode, CullingVolume, Intersect, Occluder, Cartographic } from 'cesium';
 import { CesiumIonAuth } from './cesiumIonAuth';
 import MinimalTileset from './cesium_derived/MinimalTileset';
 import { EllipsoidalOccluder } from './cesium_extracted/EllipsoidalOccluder_extracted';
@@ -15,7 +15,8 @@ export class SimpleIntegration {
     private cesiumTileset?: MinimalTileset;
     private frameCount: number = 0;
     private debugSpheresEnabled: boolean = false; // Hidden by default
-    private staticFakeCamera: any; // Cache the static fake camera - only create once
+    private frustumVisible: boolean = true; // Visible by default
+    public staticFakeCamera: any; // Cache the static fake camera - only create once
     private staticCameraSphereCreated: boolean = false; // Track if camera sphere was created
     private currentMeshIndex: number = -1; // Track which mesh camera is looking at
 
@@ -47,6 +48,19 @@ export class SimpleIntegration {
                 this.toggleAllDebugSpheres();
             }
             
+            if (event.key.toLowerCase() === 'f') {
+                this.frustumVisible = !this.frustumVisible;
+                console.log(`🔺 Frustum ${this.frustumVisible ? 'VISIBLE' : 'HIDDEN'} (press 'f' to toggle)`);
+                this.toggleFrustumVisibility();
+            }
+            
+            if (event.key === ' ') { // Spacebar
+                event.preventDefault(); // Prevent page scroll
+                console.log(`🔄 SPACEBAR PRESSED - Syncing fake camera to real camera...`);
+                this.syncFakeCameraToReal();
+                console.log(`✅ Camera sync complete!`);
+            }
+            
             if (event.key === '0') {
                 this.toggleAllTileMeshes();
             }
@@ -60,7 +74,7 @@ export class SimpleIntegration {
             }
         });
         
-        console.log(`🔘 Debug controls: 'b'=bounding spheres, '0'=toggle meshes, ←→=cycle camera through meshes`);
+        console.log(`🔘 Debug controls: 'b'=spheres, 'f'=frustum, SPACE=sync camera, '0'=meshes, ←→=cycle camera`);
     }
 
     /**
@@ -185,7 +199,7 @@ export class SimpleIntegration {
         );
         
         if (allMeshes.length === 0) {
-            console.log(`🎲 NO TILE MESHES: Found 0 tile meshes to toggle`);
+            // console.log(`🎲 NO TILE MESHES: Found 0 tile meshes to toggle`);
             return;
         }
         
@@ -206,17 +220,7 @@ export class SimpleIntegration {
             }
         }
         
-        if (newVisibility) {
-            console.log(`🎲 FORCE VISIBLE: Enabled ${enabledCount} tile meshes`);
-            // Log positions of first few meshes
-            for (let i = 0; i < Math.min(3, allMeshes.length); i++) {
-                const mesh = allMeshes[i];
-                const pos = mesh.absolutePosition || mesh.position;
-                console.log(`   Mesh ${i}: "${mesh.name}" at (${pos.x.toFixed(0)}, ${pos.y.toFixed(0)}, ${pos.z.toFixed(0)})`);
-            }
-        } else {
-            console.log(`🎲 FORCE HIDDEN: Disabled ${disabledCount} tile meshes`);
-        }
+        // console.log(`🎲 FORCE ${newVisibility ? 'VISIBLE' : 'HIDDEN'}: ${newVisibility ? 'Enabled' : 'Disabled'} ${newVisibility ? enabledCount : disabledCount} tile meshes`);
     }
 
     /**
@@ -234,7 +238,7 @@ export class SimpleIntegration {
         );
         
         if (tileMeshes.length === 0) {
-            console.log(`📷 NO MESHES: Found 0 tile meshes to target`);
+            // console.log(`📷 NO MESHES: Found 0 tile meshes to target`);
             return;
         }
         
@@ -259,9 +263,134 @@ export class SimpleIntegration {
             (this.camera as any).target = meshPos;
         }
         
-        console.log(`📷 CAMERA TARGET: Mesh ${this.currentMeshIndex + 1}/${tileMeshes.length} - "${targetMesh.name}"`);
-        console.log(`   Position: (${meshPos.x.toFixed(0)}, ${meshPos.y.toFixed(0)}, ${meshPos.z.toFixed(0)})`);
-        console.log(`   Distance from camera: ${this.scene.activeCamera?.position?.subtract(meshPos)?.length()?.toFixed(0) || 'unknown'}m`);
+        // console.log(`📷 CAMERA TARGET: Mesh ${this.currentMeshIndex + 1}/${tileMeshes.length} - "${targetMesh.name}"`);
+        // console.log(`   Position: (${meshPos.x.toFixed(0)}, ${meshPos.y.toFixed(0)}, ${meshPos.z.toFixed(0)})`);
+        // console.log(`   Distance from camera: ${this.scene.activeCamera?.position?.subtract(meshPos)?.length()?.toFixed(0) || 'unknown'}m`);
+    }
+
+    /**
+     * Toggle frustum visualization visibility
+     */
+    private toggleFrustumVisibility(): void {
+        const frustumMeshes = this.scene.meshes.filter(m => m.name.startsWith('debug_frustum'));
+        
+        for (const mesh of frustumMeshes) {
+            mesh.setEnabled(this.frustumVisible);
+        }
+        
+        if (frustumMeshes.length > 0) {
+            // console.log(`🔺 ${frustumMeshes.length} frustum meshes ${this.frustumVisible ? 'shown' : 'hidden'}`);
+        }
+    }
+
+    /**
+     * Sync fake camera to real camera position and rotation
+     */
+    private syncFakeCameraToReal(): void {
+        if (!this.staticFakeCamera) {
+            console.log('⚠️ No fake camera to sync - fake camera not created yet. Try again after tiles start loading.');
+            return;
+        }
+
+        // console.log('📷 BEFORE SYNC:');
+        // console.log(`   Fake camera position: (${this.staticFakeCamera.cesiumPosition?.x.toFixed(0) || 'undefined'}, ${this.staticFakeCamera.cesiumPosition?.y.toFixed(0) || 'undefined'}, ${this.staticFakeCamera.cesiumPosition?.z.toFixed(0) || 'undefined'})`);
+        // console.log(`   Real camera position: (${this.camera.position.x.toFixed(0)}, ${this.camera.position.y.toFixed(0)}, ${this.camera.position.z.toFixed(0)})`);
+
+        // Get real camera position and rotation
+        const realPos = this.camera.position;
+        const realTarget = this.camera.getTarget();
+        const realDirection = realTarget.subtract(realPos).normalize();
+        const realUp = this.camera.upVector || Vector3.Up();
+        const realRight = Vector3.Cross(realDirection, realUp).normalize();
+
+        // Convert Babylon to Cesium coordinates (Y-up to Z-up)
+        const cesiumPos = new Cartesian3(realPos.x, realPos.z, realPos.y);
+        const cesiumDirection = new Cartesian3(realDirection.x, realDirection.z, realDirection.y);
+        const cesiumUp = new Cartesian3(realUp.x, realUp.z, realUp.y);
+        const cesiumRight = new Cartesian3(realRight.x, realRight.z, realRight.y);
+
+        // Update basic fake camera properties
+        this.staticFakeCamera.babylonPosition = realPos;
+        this.staticFakeCamera.babylonDirection = realDirection;
+        this.staticFakeCamera.babylonUp = realUp;
+        this.staticFakeCamera.babylonRight = realRight;
+        this.staticFakeCamera.cesiumPosition = cesiumPos;
+        this.staticFakeCamera.cesiumDirection = cesiumDirection;
+        this.staticFakeCamera.cesiumUp = cesiumUp;
+        this.staticFakeCamera.cesiumRight = cesiumRight;
+
+        // Update cartographic position
+        this.staticFakeCamera.positionCartographic = Cartographic.fromCartesian(cesiumPos, Ellipsoid.WGS84);
+
+        // If the fake camera has been converted to full Cesium camera, update those properties too
+        if (this.staticFakeCamera.positionWC) {
+            // Calculate movement distance for Cesium's movement detection
+            const oldPos = this.staticFakeCamera.positionWC;
+            const movementDistance = Math.sqrt(
+                (cesiumPos.x - oldPos.x) ** 2 +
+                (cesiumPos.y - oldPos.y) ** 2 +
+                (cesiumPos.z - oldPos.z) ** 2
+            );
+            
+            // Update position and vectors
+            this.staticFakeCamera.positionWC = cesiumPos;
+            this.staticFakeCamera.directionWC = cesiumDirection;
+            this.staticFakeCamera.upWC = cesiumUp;
+            this.staticFakeCamera.rightWC = cesiumRight;
+            this.staticFakeCamera.position = cesiumPos;
+            this.staticFakeCamera.direction = cesiumDirection;
+            this.staticFakeCamera.up = cesiumUp;
+            this.staticFakeCamera.right = cesiumRight;
+            
+            // CRITICAL: Update camera movement properties to trigger tile refinement
+            this.staticFakeCamera.timeSinceMoved = 0.0; // Just moved
+            this.staticFakeCamera.positionWCDeltaMagnitudeLastFrame = this.staticFakeCamera.positionWCDeltaMagnitude || 0.0;
+            this.staticFakeCamera.positionWCDeltaMagnitude = Math.max(movementDistance, 1000.0); // Ensure significant movement
+            
+            console.log(`🎯 CAMERA MOVEMENT: ${movementDistance.toFixed(0)}m, deltaWC=${this.staticFakeCamera.positionWCDeltaMagnitude.toFixed(0)}`);
+        }
+
+        // console.log('📷 AFTER SYNC:');
+        // console.log(`   NEW Fake camera position: (${cesiumPos.x.toFixed(0)}, ${cesiumPos.y.toFixed(0)}, ${cesiumPos.z.toFixed(0)})`);
+        // console.log(`   NEW Fake camera direction: (${cesiumDirection.x.toFixed(3)}, ${cesiumDirection.y.toFixed(3)}, ${cesiumDirection.z.toFixed(3)})`);
+        // console.log(`   Frustum FOV: ${(this.staticFakeCamera.frustum.fov * 180 / Math.PI).toFixed(1)}°`);
+        // console.log(`   Frustum aspect: ${this.staticFakeCamera.frustum.aspectRatio.toFixed(3)}`);
+        
+        // Recreate frustum visualization at new camera position
+        if (this.frustumVisible) {
+            this.createFrustumVisualization(realPos, realDirection, realUp, realRight, false);
+        }
+    }
+
+    /**
+     * Handle canvas resize - update frustum and recreate visualization
+     */
+    public handleCanvasResize(): void {
+        if (!this.staticFakeCamera || !this.staticFakeCamera.frustum) return;
+
+        const newWidth = this.engine.getRenderWidth();
+        const newHeight = this.engine.getRenderHeight();
+        const newAspectRatio = newWidth / newHeight;
+
+        // Update frustum aspect ratio
+        this.staticFakeCamera.frustum.aspectRatio = newAspectRatio;
+
+        // Trigger frustum's internal update by accessing sseDenominator getter
+        const sseDenominator = (this.staticFakeCamera.frustum as any).sseDenominator;
+
+        // console.log(`📐 Frustum updated for resize: ${newWidth}x${newHeight} (aspect: ${newAspectRatio.toFixed(3)})`);
+
+        // Recreate frustum visualization with new dimensions
+        if (this.frustumVisible) {
+            // Get current camera info for visualization recreation  
+            const babylonPos = this.camera.position;
+            const babylonTarget = this.camera.getTarget();
+            const babylonDirection = babylonTarget.subtract(babylonPos).normalize();
+            const babylonUp = this.camera.upVector || Vector3.Up();
+            const babylonRight = Vector3.Cross(babylonDirection, babylonUp).normalize();
+
+            this.createFrustumVisualization(babylonPos, babylonDirection, babylonUp, babylonRight, false);
+        }
     }
 
     /**
@@ -318,22 +447,22 @@ export class SimpleIntegration {
             const babylonUp = this.camera.upVector.normalize(); // Use real camera up vector
             const babylonRight = Vector3.Cross(babylonDirection, babylonUp).normalize(); // Right vector
             
-            console.log(`🔒 STATIC CAMERA INITIALIZED: Using REAL camera position = (${babylonCameraPosition.x}, ${babylonCameraPosition.y}, ${babylonCameraPosition.z})`);
-            console.log(`🧭 BABYLON VECTORS:`);
-            console.log(`   Position: (${babylonCameraPosition.x.toFixed(0)}, ${babylonCameraPosition.y.toFixed(0)}, ${babylonCameraPosition.z.toFixed(0)})`);
-            console.log(`   Direction: (${babylonDirection.x.toFixed(3)}, ${babylonDirection.y.toFixed(3)}, ${babylonDirection.z.toFixed(3)})`);
-            console.log(`   Up: (${babylonUp.x.toFixed(3)}, ${babylonUp.y.toFixed(3)}, ${babylonUp.z.toFixed(3)})`);
-            console.log(`   Right: (${babylonRight.x.toFixed(3)}, ${babylonRight.y.toFixed(3)}, ${babylonRight.z.toFixed(3)})`);
+            // console.log(`🔒 STATIC CAMERA INITIALIZED: Using REAL camera position = (${babylonCameraPosition.x}, ${babylonCameraPosition.y}, ${babylonCameraPosition.z})`);
+            // console.log(`🧭 BABYLON VECTORS:`);
+            // console.log(`   Position: (${babylonCameraPosition.x.toFixed(0)}, ${babylonCameraPosition.y.toFixed(0)}, ${babylonCameraPosition.z.toFixed(0)})`);
+            // console.log(`   Direction: (${babylonDirection.x.toFixed(3)}, ${babylonDirection.y.toFixed(3)}, ${babylonDirection.z.toFixed(3)})`);
+            // console.log(`   Up: (${babylonUp.x.toFixed(3)}, ${babylonUp.y.toFixed(3)}, ${babylonUp.z.toFixed(3)})`);
+            // console.log(`   Right: (${babylonRight.x.toFixed(3)}, ${babylonRight.y.toFixed(3)}, ${babylonRight.z.toFixed(3)})`);
             
-            console.log(`🗺️ COORDINATE TRANSFORMATION WILL BE:`);
-            console.log(`   Position: Babylon(${babylonCameraPosition.x.toFixed(0)}, ${babylonCameraPosition.y.toFixed(0)}, ${babylonCameraPosition.z.toFixed(0)}) → Cesium(will calculate...)`);
-            console.log(`   Direction: Babylon(${babylonDirection.x.toFixed(3)}, ${babylonDirection.y.toFixed(3)}, ${babylonDirection.z.toFixed(3)}) → Cesium(will calculate...)`);
+            // console.log(`🗺️ COORDINATE TRANSFORMATION WILL BE:`);
+            // console.log(`   Position: Babylon(${babylonCameraPosition.x.toFixed(0)}, ${babylonCameraPosition.y.toFixed(0)}, ${babylonCameraPosition.z.toFixed(0)}) → Cesium(will calculate...)`);
+            // console.log(`   Direction: Babylon(${babylonDirection.x.toFixed(3)}, ${babylonDirection.y.toFixed(3)}, ${babylonDirection.z.toFixed(3)}) → Cesium(will calculate...)`);
             
             // COORDINATE TRANSFORMATION: Babylon (Y-up) back to Cesium (Z-up)
-            console.log(`\n🔄 REVERSE TRANSFORMATION: Babylon → Cesium for tile selection`);
-            console.log(`📍 INPUT: Babylon camera coordinates (Y-up, right-handed):`);
-            console.log(`   Position:  (${babylonCameraPosition.x.toFixed(1)}, ${babylonCameraPosition.y.toFixed(1)}, ${babylonCameraPosition.z.toFixed(1)})`);
-            console.log(`   Direction: (${babylonDirection.x.toFixed(3)}, ${babylonDirection.y.toFixed(3)}, ${babylonDirection.z.toFixed(3)})`);
+            // console.log(`\n🔄 REVERSE TRANSFORMATION: Babylon → Cesium for tile selection`);
+            // console.log(`📍 INPUT: Babylon camera coordinates (Y-up, right-handed):`);
+            // console.log(`   Position:  (${babylonCameraPosition.x.toFixed(1)}, ${babylonCameraPosition.y.toFixed(1)}, ${babylonCameraPosition.z.toFixed(1)})`);
+            // console.log(`   Direction: (${babylonDirection.x.toFixed(3)}, ${babylonDirection.y.toFixed(3)}, ${babylonDirection.z.toFixed(3)})`);
             
             // COORDINATE TRANSFORMATION: Babylon (Y-up) → Cesium (Z-up)
             // Transformation: (babylon_x, babylon_y, babylon_z) → (cesium_x, cesium_y, cesium_z)
@@ -364,13 +493,13 @@ export class SimpleIntegration {
                 babylonRight.y   // Babylon Y → Cesium Z
             );
             
-            console.log(`🌍 OUTPUT: Cesium coordinates (Z-up, right-handed):`);
-            console.log(`   Position:  (${cesiumCameraPosition.x.toFixed(1)}, ${cesiumCameraPosition.y.toFixed(1)}, ${cesiumCameraPosition.z.toFixed(1)})`);
-            console.log(`   Direction: (${cesiumDirection.x.toFixed(3)}, ${cesiumDirection.y.toFixed(3)}, ${cesiumDirection.z.toFixed(3)})`);
-            console.log(`   Transform rule: Babylon(X,Y,Z) → Cesium(X,Z,Y)`);
+            // console.log(`🌍 OUTPUT: Cesium coordinates (Z-up, right-handed):`);
+            // console.log(`   Position:  (${cesiumCameraPosition.x.toFixed(1)}, ${cesiumCameraPosition.y.toFixed(1)}, ${cesiumCameraPosition.z.toFixed(1)})`);
+            // console.log(`   Direction: (${cesiumDirection.x.toFixed(3)}, ${cesiumDirection.y.toFixed(3)}, ${cesiumDirection.z.toFixed(3)})`);
+            // console.log(`   Transform rule: Babylon(X,Y,Z) → Cesium(X,Z,Y)`);
             
             // COORDINATE VALIDATION: Verify transformation consistency
-            console.log(`\n✅ COORDINATE VALIDATION:`);
+            // console.log(`\n✅ COORDINATE VALIDATION:`);
             
             // Check magnitude consistency (distance from Earth center should be same)
             const babylonMagnitude = babylonCameraPosition.length();
@@ -429,19 +558,19 @@ export class SimpleIntegration {
         // DISABLED: Frustum debug spam reduction 
         if (debugFrustum) {
             // console.log(`\n🔍 === FRUSTUM DEBUG ===`);
-            console.log(`🗽 STATIC BABYLON CAMERA: position = (${babylonCameraPosition.x}, ${babylonCameraPosition.y}, ${babylonCameraPosition.z})`);
-            console.log(`🌍 BABYLON DISTANCE from origin: ${babylonCameraPosition.length().toFixed(0)} units`);
-            console.log(`🗽 CESIUM CONVERTED: position = (${this.staticFakeCamera.cesiumPosition.x}, ${this.staticFakeCamera.cesiumPosition.y}, ${this.staticFakeCamera.cesiumPosition.z})`);
-            console.log(`🌍 CESIUM DISTANCE from origin: ${Cartesian3.magnitude(this.staticFakeCamera.cesiumPosition).toFixed(0)} units`);
+            // console.log(`🗽 STATIC BABYLON CAMERA: position = (${babylonCameraPosition.x}, ${babylonCameraPosition.y}, ${babylonCameraPosition.z})`);
+            // console.log(`🌍 BABYLON DISTANCE from origin: ${babylonCameraPosition.length().toFixed(0)} units`);
+            // console.log(`🗽 CESIUM CONVERTED: position = (${this.staticFakeCamera.cesiumPosition.x}, ${this.staticFakeCamera.cesiumPosition.y}, ${this.staticFakeCamera.cesiumPosition.z})`);
+            // console.log(`🌍 CESIUM DISTANCE from origin: ${Cartesian3.magnitude(this.staticFakeCamera.cesiumPosition).toFixed(0)} units`);
             
             // 🔍 FRAMESTATE DEBUG: Verify what we're passing to the tileset
-            console.log(`🔍 FRAMESTATE CAMERA DEBUG:`);
-            console.log(`   frameState.camera.positionWC: (${this.staticFakeCamera.cesiumPosition.x}, ${this.staticFakeCamera.cesiumPosition.y}, ${this.staticFakeCamera.cesiumPosition.z})`);
-            console.log(`   frameState.camera.position: (${this.staticFakeCamera.cesiumPosition.x}, ${this.staticFakeCamera.cesiumPosition.y}, ${this.staticFakeCamera.cesiumPosition.z})`);
-            console.log(`   Camera positionCartographic: lon=${this.staticFakeCamera.positionCartographic.longitude.toFixed(4)}, lat=${this.staticFakeCamera.positionCartographic.latitude.toFixed(4)}, height=${this.staticFakeCamera.positionCartographic.height}`);
+            // console.log(`🔍 FRAMESTATE CAMERA DEBUG:`);
+            // console.log(`   frameState.camera.positionWC: (${this.staticFakeCamera.cesiumPosition.x}, ${this.staticFakeCamera.cesiumPosition.y}, ${this.staticFakeCamera.cesiumPosition.z})`);
+            // console.log(`   frameState.camera.position: (${this.staticFakeCamera.cesiumPosition.x}, ${this.staticFakeCamera.cesiumPosition.y}, ${this.staticFakeCamera.cesiumPosition.z})`);
+            // console.log(`   Camera positionCartographic: lon=${this.staticFakeCamera.positionCartographic.longitude.toFixed(4)}, lat=${this.staticFakeCamera.positionCartographic.latitude.toFixed(4)}, height=${this.staticFakeCamera.positionCartographic.height}`);
             
             // CREATE FRUSTUM VISUALIZATION: Draw the actual frustum wireframe
-            console.log(`🔺 CREATING FRUSTUM VISUALIZATION...`);
+            // console.log(`🔺 CREATING FRUSTUM VISUALIZATION...`);
             this.createFrustumVisualization(babylonCameraPosition, babylonDirection, babylonUp, babylonRight, false);
         }
         
@@ -555,20 +684,20 @@ export class SimpleIntegration {
                                 const distance = Math.sqrt(dx*dx + dy*dy + dz*dz);
                                 const distanceToSurface = distance - radius;
                                 
-                                console.log(`   📍 COORDINATE CHECK:`);
-                                console.log(`     Camera: (${cameraPos.x.toFixed(0)}, ${cameraPos.y.toFixed(0)}, ${cameraPos.z.toFixed(0)})`);
-                                console.log(`     Tile:   (${center.x.toFixed(0)}, ${center.y.toFixed(0)}, ${center.z.toFixed(0)})`);  
-                                console.log(`     Distance to center: ${distance.toFixed(0)}m, to surface: ${distanceToSurface.toFixed(0)}m`);
+                                // console.log(`   📍 COORDINATE CHECK:`);
+                                // console.log(`     Camera: (${cameraPos.x.toFixed(0)}, ${cameraPos.y.toFixed(0)}, ${cameraPos.z.toFixed(0)})`);
+                                // console.log(`     Tile:   (${center.x.toFixed(0)}, ${center.y.toFixed(0)}, ${center.z.toFixed(0)})`);  
+                                // console.log(`     Distance to center: ${distance.toFixed(0)}m, to surface: ${distanceToSurface.toFixed(0)}m`);
                                 
                                 // Check if distance seems reasonable for NYC area
                                 const isReasonableDistance = distance > 100 && distance < 50000000; // 100m to 50,000km
-                                console.log(`     Distance reasonable: ${isReasonableDistance ? '✅' : '❌'} (100m < ${distance.toFixed(0)}m < 50Mm)`);
+                                // console.log(`     Distance reasonable: ${isReasonableDistance ? '✅' : '❌'} (100m < ${distance.toFixed(0)}m < 50Mm)`);
                                 
                                 // Check if tile is anywhere near camera coordinate-space-wise
                                 const isInSameQuadrant = (Math.sign(center.x) === Math.sign(cameraPos.x)) && 
                                                         (Math.sign(center.y) === Math.sign(cameraPos.y)) && 
                                                         (Math.sign(center.z) === Math.sign(cameraPos.z));
-                                console.log(`     Same coord quadrant: ${isInSameQuadrant ? '✅' : '❌'} (signs should match for nearby tiles)`);
+                                // console.log(`     Same coord quadrant: ${isInSameQuadrant ? '✅' : '❌'} (signs should match for nearby tiles)`);
                             }
                         }
                         
@@ -604,28 +733,15 @@ export class SimpleIntegration {
                 
                 // CESIUM DIRECT: Log the actual frustum planes that Cesium will use
                 if (debugFrustum && cullingVolume?.planes) {
-                    console.log(`\n🔍 CESIUM FRUSTUM PLANES (what tiles will actually be tested against):`);
+                    // console.log(`\n🔍 CESIUM FRUSTUM PLANES (what tiles will actually be tested against):`);
                     const planeNames = ['LEFT', 'RIGHT', 'BOTTOM', 'TOP', 'NEAR', 'FAR'];
                     for (let i = 0; i < Math.min(cullingVolume.planes.length, 6); i++) {
                         const plane = cullingVolume.planes[i];
                         if (plane) {
-                            console.log(`   ${planeNames[i]}: normal(${plane.x?.toFixed(3)}, ${plane.y?.toFixed(3)}, ${plane.z?.toFixed(3)}), distance=${plane.w?.toFixed(0)}`);
-                            
-                            // TEST: Check if this plane would cull our NYC tiles at reasonable distances
-                            const nycApproxCenter = new Cartesian3(1333425, -4663874, 4142833); // Our camera position as test point
-                            const testSphereRadius = 100000; // 100km radius test sphere
-                            
-                            const distanceToPlane = Cartesian3.dot(new Cartesian3(plane.x, plane.y, plane.z), nycApproxCenter) + plane.w;
-                            const wouldCull = distanceToPlane < -testSphereRadius; // Sphere completely outside plane
-                            
-                            console.log(`     Test at camera pos: distance to plane=${distanceToPlane.toFixed(0)}, would cull 100km sphere=${wouldCull ? '❌ YES' : '✅ NO'}`);
-                            
-                            if (wouldCull) {
-                                console.log(`     ❌ CRITICAL: ${planeNames[i]} plane would cull tiles near camera! This plane is too restrictive.`);
-                            }
+                            // console.log(`   ${planeNames[i]}: normal(${plane.x?.toFixed(3)}, ${plane.y?.toFixed(3)}, ${plane.z?.toFixed(3)}), distance=${plane.w?.toFixed(0)}`);
                         }
                     }
-                    console.log(`🔍 END FRUSTUM PLANE ANALYSIS\n`);
+                    // console.log(`🔍 END FRUSTUM PLANE ANALYSIS\n`);
                 }
                 
                 return cullingVolume;
@@ -665,9 +781,9 @@ export class SimpleIntegration {
                         fakeCamera.positionWC
                     );
                     
-                    if (this.frameCount % 600 === 0) { // Debug every 10 seconds
-                        console.log(`🌍 HORIZON OCCLUDER: Created with Earth radius=${earthBoundingSphere.radius.toFixed(0)}m, camera at distance=${Cartesian3.magnitude(fakeCamera.positionWC).toFixed(0)}m`);
-                    }
+                    // if (this.frameCount % 600 === 0) { // Debug every 10 seconds
+                        // console.log(`🌍 HORIZON OCCLUDER: Created with Earth radius=${earthBoundingSphere.radius.toFixed(0)}m, camera at distance=${Cartesian3.magnitude(fakeCamera.positionWC).toFixed(0)}m`);
+                    // }
                     
                     return occluder;
                 } catch (error) {
@@ -681,9 +797,9 @@ export class SimpleIntegration {
                 try {
                     const ellipsoidalOccluder = new EllipsoidalOccluder(Ellipsoid.WGS84, fakeCamera.positionWC);
                     
-                    if (this.frameCount % 600 === 0) { // Debug every 10 seconds
-                        console.log(`🌐 ELLIPSOIDAL OCCLUDER: Created for precise tileset horizon culling`);
-                    }
+                    // if (this.frameCount % 600 === 0) { // Debug every 10 seconds
+                        // console.log(`🌐 ELLIPSOIDAL OCCLUDER: Created for precise tileset horizon culling`);
+                    // }
                     
                     return ellipsoidalOccluder;
                 } catch (error) {
@@ -698,15 +814,15 @@ export class SimpleIntegration {
             // console.log('\n🔍 === FRAMESTATE & CAMERA VALIDATION ==='); // Only every 600 frames
             
             // Validate frameState structure
-            console.log('📋 FrameState structure:', {
-                hasCamera: !!frameState.camera,
-                hasCullingVolume: !!frameState.cullingVolume,
-                hasPixelRatio: typeof frameState.pixelRatio !== 'undefined',
-                hasMode: typeof frameState.mode !== 'undefined',
-                hasFrameNumber: typeof frameState.frameNumber !== 'undefined',
-                mode: frameState.mode,
-                pixelRatio: frameState.pixelRatio
-            });
+            // console.log('📋 FrameState structure:', {
+            //     hasCamera: !!frameState.camera,
+            //     hasCullingVolume: !!frameState.cullingVolume,
+            //     hasPixelRatio: typeof frameState.pixelRatio !== 'undefined',
+            //     hasMode: typeof frameState.mode !== 'undefined',
+            //     hasFrameNumber: typeof frameState.frameNumber !== 'undefined',
+            //     mode: frameState.mode,
+            //     pixelRatio: frameState.pixelRatio
+            // });
             
             // DISABLED: Camera validation spam reduction
         }
@@ -719,17 +835,17 @@ export class SimpleIntegration {
             this.createFrustumFromFrameState(frameState);
             
             // HORIZON CULLING DEBUG: Check which tiles are actually being selected
-            console.log(`\n🌍 HORIZON CULLING ANALYSIS:`);
+            // console.log(`\n🌍 HORIZON CULLING ANALYSIS:`);
             const selectedTiles = this.cesiumTileset.selectedTiles || [];
-            console.log(`   📊 Total selected tiles: ${selectedTiles.length}`);
+            // console.log(`   📊 Total selected tiles: ${selectedTiles.length}`);
             
             if (selectedTiles.length > 0) {
                 // Analyze selected tile positions relative to camera
                 const cameraPos = fakeCamera.positionWC;
                 const cameraDir = fakeCamera.directionWC;
                 
-                console.log(`   📍 Camera position: (${cameraPos.x.toFixed(0)}, ${cameraPos.y.toFixed(0)}, ${cameraPos.z.toFixed(0)})`);
-                console.log(`   🧭 Camera direction: (${cameraDir.x.toFixed(3)}, ${cameraDir.y.toFixed(3)}, ${cameraDir.z.toFixed(3)})`);
+                // console.log(`   📍 Camera position: (${cameraPos.x.toFixed(0)}, ${cameraPos.y.toFixed(0)}, ${cameraPos.z.toFixed(0)})`);
+                // console.log(`   🧭 Camera direction: (${cameraDir.x.toFixed(3)}, ${cameraDir.y.toFixed(3)}, ${cameraDir.z.toFixed(3)})`);
                 
                 // Group tiles by hemisphere (those behind vs in front of camera)
                 let tilesInFront = 0;
@@ -752,13 +868,13 @@ export class SimpleIntegration {
                             
                             if (dotProduct > 0.5) {
                                 tilesInFront++;
-                                if (i < 3) console.log(`   ✅ Tile ${i+1}: IN FRONT (dot=${dotProduct.toFixed(3)}, dist=${distance.toFixed(0)}m, earthDist=${earthDistance.toFixed(0)}m)`);
+                                // if (i < 3) console.log(`   ✅ Tile ${i+1}: IN FRONT (dot=${dotProduct.toFixed(3)}, dist=${distance.toFixed(0)}m, earthDist=${earthDistance.toFixed(0)}m)`);
                             } else if (dotProduct < -0.5) {
                                 tilesBehind++;
-                                if (i < 3) console.log(`   🚨 Tile ${i+1}: BEHIND (dot=${dotProduct.toFixed(3)}, dist=${distance.toFixed(0)}m, earthDist=${earthDistance.toFixed(0)}m)`);
+                                // if (i < 3) console.log(`   🚨 Tile ${i+1}: BEHIND (dot=${dotProduct.toFixed(3)}, dist=${distance.toFixed(0)}m, earthDist=${earthDistance.toFixed(0)}m)`);
                             } else {
                                 tilesAtSide++;
-                                if (i < 3) console.log(`   ↔️ Tile ${i+1}: AT SIDE (dot=${dotProduct.toFixed(3)}, dist=${distance.toFixed(0)}m, earthDist=${earthDistance.toFixed(0)}m)`);
+                                // if (i < 3) console.log(`   ↔️ Tile ${i+1}: AT SIDE (dot=${dotProduct.toFixed(3)}, dist=${distance.toFixed(0)}m, earthDist=${earthDistance.toFixed(0)}m)`);
                             }
                         }
                     } catch (e) {
@@ -766,11 +882,11 @@ export class SimpleIntegration {
                     }
                 });
                 
-                console.log(`   📈 HORIZON ANALYSIS: ${tilesInFront} in front, ${tilesAtSide} at side, ${tilesBehind} behind camera`);
+                // console.log(`   📈 HORIZON ANALYSIS: ${tilesInFront} in front, ${tilesAtSide} at side, ${tilesBehind} behind camera`);
                 if (tilesBehind > 0) {
                     console.log(`   🚨 WARNING: ${tilesBehind} tiles selected BEHIND camera - horizon culling may not be working!`);
                 } else {
-                    console.log(`   ✅ SUCCESS: No tiles behind camera - horizon culling appears to be working`);
+                    // console.log(`   ✅ SUCCESS: No tiles behind camera - horizon culling appears to be working`);
                 }
             }
         }
@@ -1036,10 +1152,10 @@ export class SimpleIntegration {
             const frustum = cesiumCamera.frustum;
             const context = frameState.context;
             
-            console.log('🔺 CREATING DEBUG FRUSTUM from frameState:');
-            console.log(`   Position: Cesium(${cesiumPos.x.toFixed(0)}, ${cesiumPos.y.toFixed(0)}, ${cesiumPos.z.toFixed(0)}) → Babylon(${babylonPos.x.toFixed(0)}, ${babylonPos.y.toFixed(0)}, ${babylonPos.z.toFixed(0)})`);
-            console.log(`   FOV: ${(frustum.fov * 180 / Math.PI).toFixed(1)}°, near: ${frustum.near}, far: ${frustum.far}`);
-            console.log(`   Screen: ${context.drawingBufferWidth}x${context.drawingBufferHeight}`);
+            // console.log('🔺 CREATING DEBUG FRUSTUM from frameState:');
+            // console.log(`   Position: Cesium(${cesiumPos.x.toFixed(0)}, ${cesiumPos.y.toFixed(0)}, ${cesiumPos.z.toFixed(0)}) → Babylon(${babylonPos.x.toFixed(0)}, ${babylonPos.y.toFixed(0)}, ${babylonPos.z.toFixed(0)})`);
+            // console.log(`   FOV: ${(frustum.fov * 180 / Math.PI).toFixed(1)}°, near: ${frustum.near}, far: ${frustum.far}`);
+            // console.log(`   Screen: ${context.drawingBufferWidth}x${context.drawingBufferHeight}`);
             
             // Call existing visualization with converted coordinates
             this.createFrustumVisualization(babylonPos, babylonDir, babylonUp, babylonRight, false);
@@ -1205,15 +1321,19 @@ export class SimpleIntegration {
             const material = new StandardMaterial('debug_frustum_material', this.scene);
             material.diffuseColor = restrictive ? new Color3(1, 0, 1) : new Color3(0, 1, 1); // Magenta for restrictive, cyan for normal
             material.emissiveColor = restrictive ? new Color3(0.5, 0, 0.5) : new Color3(0, 0.5, 0.5); // Make it glow
+            material.alpha = 0.25; // 75% transparent (25% opaque)
+            material.transparencyMode = StandardMaterial.MATERIAL_ALPHABLEND;
             
             for (const mesh of frustumMeshes) {
                 mesh.material = material;
+                // Set visibility based on frustumVisible flag
+                mesh.setEnabled(this.frustumVisible);
             }
             
-            console.log(`🔺 FRUSTUM VISUALIZATION: Created Cesium default frustum`);
-            console.log(`   Near: ${nearDistance}m (${nearWidth.toFixed(1)}×${nearHeight.toFixed(1)}m)`);
-            console.log(`   Far: ${farDistance/1000000}Mkm (${farWidth/1000000}×${farHeight/1000000}Mkm)`);
-            console.log(`   Camera position: (${babylonPosition.x.toFixed(0)}, ${babylonPosition.y.toFixed(0)}, ${babylonPosition.z.toFixed(0)})`);
+            // console.log(`🔺 FRUSTUM VISUALIZATION: Created Cesium default frustum`);
+            // console.log(`   Near: ${nearDistance}m (${nearWidth.toFixed(1)}×${nearHeight.toFixed(1)}m)`);
+            // console.log(`   Far: ${farDistance/1000000}Mkm (${farWidth/1000000}×${farHeight/1000000}Mkm)`);
+            // console.log(`   Camera position: (${babylonPosition.x.toFixed(0)}, ${babylonPosition.y.toFixed(0)}, ${babylonPosition.z.toFixed(0)})`);
             // console.log(`🔍 === END FRUSTUM DEBUG ===\n`);
             
         } catch (error) {
@@ -1326,6 +1446,12 @@ export class SimpleIntegration {
 
             // Other required properties
             positionCartographic: staticCameraData.positionCartographic,
+            
+            // CRITICAL: Camera movement detection properties for tile refinement
+            // Force Cesium's traversal to treat camera as "just moved significantly"
+            timeSinceMoved: 0.0,  // Camera just moved (triggers immediate tile refinement)
+            positionWCDeltaMagnitude: 1000.0,  // Significant movement magnitude
+            positionWCDeltaMagnitudeLastFrame: 0.0,
             
             // Create frustum with validation
             frustum: (() => {

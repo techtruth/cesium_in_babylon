@@ -28,8 +28,8 @@ import { Cesium3DTilesetCache } from '../cesium_extracted/Cesium3DTilesetCache_e
 import { Cesium3DTilePass, getPassOptions } from '../cesium_extracted/Cesium3DTilePass_extracted';
 import { Cesium3DTileContentState } from '../cesium_extracted/Cesium3DTileContentState_extracted';
 import { Cesium3DTileRefine } from '../cesium_extracted/Cesium3DTileRefine_extracted';
-// BABYLON DERIVED: Use derived traversal with horizon culling modifications
-import Cesium3DTilesetBaseTraversal from '../cesium_derived/Cesium3DTilesetTraversal_derived';
+// CESIUM EXTRACTED: Use proper traversal implementations
+import Cesium3DTilesetBaseTraversal from '../cesium_extracted/Cesium3DTilesetBaseTraversal_extracted';
 import Cesium3DTilesetSkipTraversal from '../cesium_extracted/Cesium3DTilesetSkipTraversal_extracted';
 
 import { preprocess3DTileContent, Cesium3DTileContentType } from '../cesium_extracted/preprocess3DTileContent_extracted';
@@ -71,14 +71,29 @@ export default class MinimalTileset {
     private _modelMatrix: Matrix4 = Matrix4.IDENTITY.clone();
     
     public progressiveResolutionHeightFraction: number = 0.3;
+    
+    // GOOGLE 3D TILES: Enable skip LOD for better performance and high-res refinement
     public isSkippingLevelOfDetail: boolean = true;
-    public cullRequestsWhileMoving: boolean = true;
+    public baseScreenSpaceError: number = 1024; // Cesium default for skip LOD
+    public skipScreenSpaceErrorFactor: number = 16; // Cesium default
+    public skipLevels: number = 1; // Cesium default
+    
+    // GOOGLE 3D TILES: Reduce culling to allow refinement during camera movement
+    public cullRequestsWhileMoving: boolean = false; // Allow refinement during movement
+    private _cullRequestsWhileMoving: boolean = false; // Internal property used by traversal
     public cullRequestsWhileMovingMultiplier: number = 60.0;
     public preferLeaves: boolean = false;
     
     // Enable loadSiblings to reduce gaps
     // When true, forces sibling tiles to load together, reducing coverage holes
     public loadSiblings: boolean = true; // Ensure sibling tiles load together to prevent gaps
+    
+    // GOOGLE 3D TILES: Foveated rendering for center-of-view prioritization
+    public foveatedScreenSpaceError: boolean = true; // Cesium default
+    public foveatedConeSize: number = 0.1; // Cesium default 
+    public foveatedMinimumScreenSpaceErrorRelaxation: number = 0.0; // Cesium default
+    public foveatedTimeDelay: number = 0.2; // Cesium default delay
+    public foveatedInterpolationCallback: Function = CesiumMath.lerp; // Cesium default
     
     // CESIUM EXACT: Dynamic screen space error properties exactly like Cesium3DTileset.js
     public dynamicScreenSpaceError: boolean = true;
@@ -89,14 +104,14 @@ export default class MinimalTileset {
     // CESIUM EXACT: Updated based on the camera position and direction
     public _dynamicScreenSpaceErrorComputedDensity: number = 0.0;
     
-    // REFERENCE CLONE: Core tileset properties - CESIUM DEFAULT
-    public maximumScreenSpaceError: number = 16; // Cesium default: 16  
-    private _maximumScreenSpaceError: number = 16;
+    // GOOGLE 3D TILES: More aggressive screen space error for higher resolution
+    public maximumScreenSpaceError: number = 8; // Lower = higher quality (was 16)
+    private _maximumScreenSpaceError: number = 8;
     
-    private _memoryAdjustedScreenSpaceError: number = 16;
+    private _memoryAdjustedScreenSpaceError: number = 8;
     
     // CESIUM EXACT: Properties that Cesium's BaseTraversal expects  
-    public memoryAdjustedScreenSpaceError: number = 16;
+    public memoryAdjustedScreenSpaceError: number = 8;
     public debugFreezeFrame: boolean = false;
     public hasMixedContent: boolean = false;
     
@@ -172,7 +187,7 @@ export default class MinimalTileset {
     }) {
         // REFERENCE CLONE: Initialize core properties exactly like reference
         this._url = options.url;
-        this.maximumScreenSpaceError = options.maximumScreenSpaceError ?? 16; // CESIUM DEFAULT
+        this.maximumScreenSpaceError = options.maximumScreenSpaceError ?? 8; // GOOGLE 3D TILES: Higher quality
         this._maximumScreenSpaceError = this.maximumScreenSpaceError;
         this._memoryAdjustedScreenSpaceError = this.maximumScreenSpaceError;
         
@@ -282,23 +297,12 @@ export default class MinimalTileset {
         );
         
         
-        // ✅ CESIUM EXACT: All properties are initialized by Cesium3DTile constructor
-        // ✅ contentAvailable, contentReady, contentVisibility are already on prototype
-        // ✅ _distanceToCamera, _centerZDepth, _refines, _shouldSelect, etc. are set in constructor
-        // ✅ hasRenderableContent is set correctly by constructor based on hasEmptyContent
-        
-        // CESIUM PATTERN: Tiles with content URIs should have hasRenderableContent = true
-        // Override only if Cesium constructor incorrectly set it to false
+        // Ensure tiles with content URIs are marked as having renderable content
         if (tileJson.content && tileJson.content.uri && !(tile as any).hasRenderableContent) {
             (tile as any).hasRenderableContent = true;
         }
-
         
-        // Reference implementation does NOTHING after constructor call
-        
-        // Cesium3DTile constructor handles ALL setup: _contentResource, _priority, _serverKey, etc.
-        
-        // Add children if they exist - pass the same baseResource for consistency
+        // Create child tiles
         if (tileJson.children) {
             for (const childJson of tileJson.children) {
                 const childTile = this.createTileFromJson(childJson, baseResource, tile);
@@ -364,6 +368,9 @@ export default class MinimalTileset {
             this.updateDynamicScreenSpaceError(frameState);
         }
         
+        // CESIUM EXACT: Update _cullRequestsWhileMoving based on camera movement and model matrix changes
+        this._cullRequestsWhileMoving = this.cullRequestsWhileMoving && !this._modelMatrixChanged;
+        
         this._frameNumber++;
 
         // DISABLED: Root tile debugging - too verbose
@@ -385,56 +392,12 @@ export default class MinimalTileset {
         
         // BaseTraversal working - logging disabled
         
-        // CESIUM-STYLE: Viewport coverage analysis for edge gap debugging
+        // Simple gap analysis
         if (this._updatedVisibilityFrame % 120 === 0) {
-            let visibleTiles = 0;
-            let edgeTiles = 0;
-            let centerTiles = 0;
-            
-            const camera = frameState.camera;
-            const frameWidth = frameState.context.drawingBufferWidth;
-            const frameHeight = frameState.context.drawingBufferHeight;
-            const tanHalfFOV = Math.tan(camera.frustum.fov * 0.5);
-            const aspectRatio = frameWidth / frameHeight;
-            
-            this._selectedTiles.forEach(tile => {
-                if ((tile as any).isVisible && (tile as any).contentAvailable) {
-                    visibleTiles++;
-                    
-                    const boundingSphere = (tile as any).boundingSphere;
-                    if (boundingSphere?.center) {
-                        const tileVector = Cartesian3.subtract(boundingSphere.center, camera.positionWC, new Cartesian3());
-                        const forward = Cartesian3.dot(tileVector, camera.directionWC);
-                        
-                        if (forward > camera.frustum.near) {
-                            const right = Cartesian3.dot(tileVector, camera.rightWC);
-                            const up = Cartesian3.dot(tileVector, camera.upWC);
-                            
-                            // Cesium-style screen space projection
-                            const projectedX = right / (forward * tanHalfFOV * aspectRatio);
-                            const projectedY = up / (forward * tanHalfFOV);
-                            
-                            const screenX = (projectedX + 1.0) * 0.5 * frameWidth;
-                            const screenY = (1.0 - projectedY) * 0.5 * frameHeight;
-                            const screenRadius = (boundingSphere.radius * frameHeight) / (2.0 * forward * tanHalfFOV);
-                            
-                            // Check viewport edge proximity
-                            const edgeBuffer = 10;
-                            const isNearEdge = (
-                                screenX - screenRadius < edgeBuffer || 
-                                screenX + screenRadius > frameWidth - edgeBuffer ||
-                                screenY - screenRadius < edgeBuffer || 
-                                screenY + screenRadius > frameHeight - edgeBuffer
-                            );
-                            
-                            if (isNearEdge) edgeTiles++;
-                            else centerTiles++;
-                        }
-                    }
-                }
-            });
-            
-            console.log(`🕳️ GAPS: ${visibleTiles}/${this._selectedTiles.length} tiles visible (${edgeTiles} near edges, ${centerTiles} in center)`);
+            const visibleCount = this._selectedTiles.filter(tile => 
+                (tile as any).isVisible && (tile as any).contentAvailable
+            ).length;
+            console.log(`Tiles: ${visibleCount}/${this._selectedTiles.length} visible`);
         }
 
         // CESIUM EXACT: Process tiles like Cesium does
@@ -454,44 +417,30 @@ export default class MinimalTileset {
     
 
     /**
-     * REFERENCE CLONE: Update statistics exactly like reference implementation
+     * Update statistics
      */
     private updateStatistics(): void {
-        // Clone current stats to last frame like reference
         Cesium3DTilesetStatistics.clone(this._statistics, this._statisticsLast);
-        
-        // Clear current frame and update statistics
         this._statistics.clear();
         this._statistics.selected = this._selectedTiles.length;
         this._statistics.numberOfAttemptedRequests = this._requestedTiles.length;
         this._statistics.visited = this._selectedTiles.length + this._emptyTiles.length;
     }
 
-    // ✅ REMOVED: updateRequestFlightTracking() - not in Cesium structure
-    
     /**
-     * CESIUM EXACT: Process tiles with proper request prioritization and limits
+     * Process requested tiles with prioritization
      */
     private processTiles(frameState: any): void {
-        // CESIUM PRIORITIZATION: Sort requested tiles by priority (distance, screen space error)
+        // Sort requested tiles by distance (closer first)
         const prioritizedTiles = this._requestedTiles.slice().sort((a: any, b: any) => {
-            // Primary: Distance to camera (closer tiles first)
             const distDiff = a._distanceToCamera - b._distanceToCamera;
-            if (Math.abs(distDiff) > 1000) { // 1km threshold
-                return distDiff;
-            }
-            
-            // Secondary: Screen space error (higher error = more important)
+            if (Math.abs(distDiff) > 1000) return distDiff;
             return (b._screenSpaceError || 0) - (a._screenSpaceError || 0);
         });
         
-        // CESIUM LIMITS: Only process a limited number of tiles per frame to prevent distant tile spam
-        const maxRequestsPerFrame = 8; // Cesium typically limits concurrent tile requests
+        // Limit requests per frame
+        const maxRequestsPerFrame = 8;
         const frameBudget = Math.min(prioritizedTiles.length, maxRequestsPerFrame);
-        
-        // TEMPORARILY DISABLED: Distance culling to test pure frustum culling
-        const camera = frameState.camera;
-        // const maxLoadDistance = 50000; // 50km max load distance for street-level view
         
         let processedCount = 0;
         let noContentResourceCount = 0;
@@ -519,44 +468,26 @@ export default class MinimalTileset {
                 
                 processedCount++;
                 
-                // Request raw ArrayBuffer without letting Cesium process into 3D models
-                // We want the raw data for Babylon.js, not processed Cesium content
                 try {
-                    // Clone the resource exactly like reference implementation
-                    // "it is important to clone here. The fetchArrayBuffer() below uses
-                    // throttling, but other uses of the resources do not."
                     const resource = (tile as any)._contentResource.clone();
                     
-                    // Create priority function like reference implementation
-                    const createPriorityFunction = (tile: any) => {
-                        return function() {
-                            return tile._priority;
-                        };
-                    };
-                    
-                    // Create Request object exactly like reference implementation
                     const request = new Request({
                         throttle: true,
                         throttleByServer: true,
                         type: RequestType.TILES3D,
-                        priorityFunction: createPriorityFunction(tile),
+                        priorityFunction: () => tile._priority,
                         serverKey: (tile as any)._serverKey
                     });
                     
-                    // Assign request to tile to prevent duplicates (like reference)
                     (tile as any)._request = request;
                     resource.request = request;
                     
                     const promise = resource.fetchArrayBuffer();
                     if (!defined(promise)) {
-                        // No promise returned, like reference implementation
                         return;
                     }
                     
-                    // Add to flight tracking
                     this._requestedTilesInFlight.push(tile);
-                    
-                    // Process the promise like reference processArrayBuffer function
                     this.processArrayBuffer(tile, request, promise);
                 } catch (error) {
                     console.error('Error requesting tile content:', error);
@@ -564,59 +495,204 @@ export default class MinimalTileset {
                 }
             }
         }
-        
-        // Log prioritization and processing results
-        if (processedCount > 0 || noContentResourceCount > 0 || distanceCulledCount > 0) {
-            
-        }
     }
     
     /**
-     * Update tile content - calls tile._content.update() just like Cesium3DTileset does
+     * Update tile content
      */
     private updateTileContent(frameState: any): void {
-        // CESIUM EXACT: Reset the visible count each frame for accurate debugging
         (BabylonModel3DTileContent as any)._visibleCount = 0;
         
-        // REMOVED: Non-Cesium tile hiding logic - let Cesium handle visibility naturally
-        
-        // CESIUM EXACT: Setup before updateTiles like Cesium reference does
-        // tileset._styleEngine.applyStyle(tileset); - Skip for now, we don't have a style engine
-        
-        // CESIUM EXACT: Initialize backface commands like reference
         if (!this._backfaceCommands) {
             this._backfaceCommands = [];
         }
         this._backfaceCommands.length = 0;
         
-        // CESIUM EXACT: Get passOptions like Cesium reference does
-        const pass = Cesium3DTilePass.RENDER; // Default render pass
+        const pass = Cesium3DTilePass.RENDER;
         const passOptions = getPassOptions(pass);
         
-        // CESIUM EXACT: ONLY update selected tiles - this is the core visibility pattern!
-        // Non-selected tiles never get update() called, which automatically makes them invisible
-        for (const tile of this._selectedTiles) {
+        // DEBUG: Check what tiles are selected
+        if (this._updatedVisibilityFrame % 300 === 0) {
+            const tileInfo = this._selectedTiles.slice(0, 5).map((tile: any) => ({
+                hasContent: !!tile._content,
+                hasChildren: tile.children?.length > 0,
+                refine: tile.refine === 1 ? 'REPLACE' : 'ADD',
+                depth: tile._depth,
+                sse: tile._screenSpaceError?.toFixed(1)
+            }));
+            console.log(`📋 SELECTED TILES: ${this._selectedTiles.length} total, first 5:`, tileInfo);
+            
+            // Show parent vs child breakdown
+            const parentTiles = this._selectedTiles.filter((tile: any) => tile.children?.length > 0);
+            const leafTiles = this._selectedTiles.filter((tile: any) => !tile.children?.length);
+            console.log(`📊 TILE BREAKDOWN: ${parentTiles.length} parents + ${leafTiles.length} leaves = ${this._selectedTiles.length} total`);
+            
+            // DEBUG: Show which tiles are actually visible in Babylon
+            console.log(`👁️ TILE VISIBILITY STATUS:`);
+            for (let i = 0; i < Math.min(3, this._selectedTiles.length); i++) {
+                const tile = this._selectedTiles[i];
+                const content = tile._content;
+                const contentShow = content ? content.show : 'no-content';
+                const depth = tile._depth || '?';
+                const childCount = tile.children ? tile.children.length : 0;
+                const refineType = tile.refine === 1 ? 'REPLACE' : 'ADD';
+                console.log(`   Tile ${i+1} (depth=${depth}): content.show=${contentShow}, children=${childCount}, refine=${refineType}`);
+            }
+        }
+        
+        // CESIUM REFINEMENT: Filter tiles for REPLACE refinement
+        // Don't update parent tiles if their children are selected
+        const selectedTileIds = new Set(this._selectedTiles.map((tile: any) => tile.id || tile._id || tile));
+        const tilesToUpdate = this._selectedTiles.filter((tile: any) => {
+            // Always update leaf tiles (no children)
+            if (!tile.children || tile.children.length === 0) {
+                return true;
+            }
+            
+            // For parent tiles with REPLACE refinement, only update if no children are selected
+            if ((tile as any).refine === Cesium3DTileRefine.REPLACE) {
+                const hasSelectedChildren = tile.children.some((child: any) => 
+                    selectedTileIds.has(child.id || child._id || child)
+                );
+                return !hasSelectedChildren; // Don't update if children are selected
+            }
+            
+            // For ADD refinement, always update
+            return true;
+        });
+        
+        if (this._updatedVisibilityFrame % 300 === 0) {
+            console.log(`🎯 TILE FILTERING: ${this._selectedTiles.length} selected → ${tilesToUpdate.length} will be updated`);
+        }
+        
+        // Update only filtered tiles (prevents parent visibility in REPLACE refinement)
+        for (const tile of tilesToUpdate) {
             try {
-                // This is the key call that matches Cesium exactly!
-                // In Cesium: tile.update(tileset, frameState, passOptions)
                 (tile as any).update(this, frameState, passOptions);
             } catch (error) {
                 console.error('Error updating selected tile:', error);
             }
         }
         
-        // NOTE: We deliberately DO NOT update _emptyTiles here!
-        // According to Cesium reference, only selected tiles get updated each frame.
-        // This is how tiles become invisible - by not getting their update() method called.
+        // CESIUM REFINEMENT: Hide deselected tiles and re-hide parents if needed
+        this.hideDeselectedTiles();
+        this.hideReplacedParentTiles(); // Run again after updates to catch any re-enabled parents
         
-        // Trust Cesium: Let it handle all state transitions naturally
-        // Cesium's tile.update() will call updateContent() which handles state transitions
+        // DEBUG: Log SSE values for close-distance analysis
+        if (this._updatedVisibilityFrame % 120 === 0) {
+            this.debugScreenSpaceError();
+        }
     }
     
-    // REMOVED: hideDeselectedTiles() - Non-Cesium logic removed, let Cesium handle tile visibility naturally
-
-
-
+    /**
+     * Hide tiles that are no longer selected (critical for tile refinement)
+     * This implements the "REPLACE" refinement behavior where parent tiles hide when children are visible
+     */
+    private hideDeselectedTiles(): void {
+        const currentSelectedIds = new Set(this._selectedTiles.map((tile: any) => tile.id || tile._id || tile));
+        
+        // Check all previously selected tiles
+        for (const prevTileId of this._lastSelectedTiles) {
+            if (!currentSelectedIds.has(prevTileId)) {
+                // This tile was selected before but not now - hide it
+                const tile = this.findTileById(prevTileId);
+                if (tile && (tile as any)._content) {
+                    const content = (tile as any)._content;
+                    if (typeof content.show !== 'undefined') {
+                        content.show = false; // Hide deselected tile
+                    }
+                }
+            }
+        }
+        
+        // Update the tracking set for next frame
+        this._lastSelectedTiles = currentSelectedIds;
+    }
+    
+    /**
+     * Hide parent tiles when their children are available (REPLACE refinement behavior)
+     * This matches Cesium's approach: parents should be hidden when children are ready to render
+     */
+    private hideReplacedParentTiles(): void {
+        // For all selected parent tiles with REPLACE refinement, check if their children are ready
+        for (const parentTile of this._selectedTiles) {
+            if ((parentTile as any).refine !== Cesium3DTileRefine.REPLACE) continue;
+            if (!(parentTile as any)._content) continue;
+            
+            const children = (parentTile as any).children || [];
+            if (children.length === 0) continue;
+            
+            // Check if children are ready to replace this parent
+            // A child is ready if it has content available (don't check SSE as it may be invalid with 0 distance)
+            const readyChildren = children.filter((child: any) => {
+                return child.contentAvailable;
+            });
+            
+            // DEBUG: Show why children might not be ready
+            if (children.length > 0 && readyChildren.length === 0) {
+                const childStatus = children.slice(0, 2).map((child: any) => ({
+                    contentAvailable: child.contentAvailable,
+                    sse: child._screenSpaceError?.toFixed(1),
+                    distance: child._distanceToCamera?.toFixed(0)
+                }));
+                console.log(`   💭 Children not ready for parent (depth=${(parentTile as any)._depth}):`, childStatus);
+            }
+            
+            // Hide parent if ANY children are ready (partial replacement is better than low-res parent)
+            if (readyChildren.length > 0) {
+                const wasVisible = (parentTile as any)._content.show;
+                (parentTile as any)._content.show = false;
+                
+                // DEBUG: Log parent hiding based on ready children
+                if (wasVisible) {
+                    console.log(`🙈 HIDING PARENT: ${readyChildren.length}/${children.length} children ready, parent hidden (depth=${(parentTile as any)._depth})`);
+                }
+            }
+        }
+    }
+    
+    /**
+     * Find a tile by ID in the tileset tree
+     */
+    private findTileById(tileId: any): any {
+        if (!this._root) return null;
+        
+        const searchQueue = [this._root];
+        while (searchQueue.length > 0) {
+            const tile = searchQueue.shift();
+            if (!tile) continue;
+            
+            const id = (tile as any).id || (tile as any)._id || tile;
+            if (id === tileId) {
+                return tile;
+            }
+            
+            // Add children to search queue
+            if ((tile as any).children) {
+                searchQueue.push(...(tile as any).children);
+            }
+        }
+        return null;
+    }
+    
+    /**
+     * Debug screen space error values to understand close-distance behavior
+     */
+    private debugScreenSpaceError(): void {
+        console.log(`\n📐 SSE DEBUG (threshold: ${this.memoryAdjustedScreenSpaceError}):`);
+        
+        const selectedTiles = this._selectedTiles.slice(0, 3); // First 3 tiles
+        selectedTiles.forEach((tile: any, i: number) => {
+            const sse = tile._screenSpaceError || 0;
+            const distance = tile._distanceToCamera || 0;
+            const geometricError = tile.geometricError || 0;
+            const shouldRefine = sse > this.memoryAdjustedScreenSpaceError;
+            const hasChildren = tile.children && tile.children.length > 0;
+            
+            console.log(`   Tile ${i+1}: SSE=${sse.toFixed(1)} (${shouldRefine ? 'REFINE' : 'keep'}), dist=${distance.toFixed(0)}m, geomErr=${geometricError.toFixed(0)}, children=${hasChildren}`);
+        });
+        console.log('');
+    }
     
     /**
      * Handle proper tile unloading when Cesium unloads tiles
