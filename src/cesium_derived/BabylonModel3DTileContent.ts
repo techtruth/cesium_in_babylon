@@ -11,6 +11,7 @@ import '@babylonjs/loaders/glTF';
 import { Babylon3DTileContentBase } from './Babylon3DTileContent';
 import { B3dmParserV2 } from './B3dmParser_v2';
 import { BabylonGltfLoader } from './BabylonGltfLoader_derived';
+import { Cesium3DTileContentState } from '../cesium_extracted/Cesium3DTileContentState_extracted';
 
 /**
  * CESIUM REFERENCE: @cesium/engine/Source/Scene/Model/Model3DTileContent.js
@@ -112,6 +113,11 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
         this._arrayBuffer = arrayBuffer;
         this._url = url;
 
+        // CRITICAL: Override base class ready state - we'll set it when meshes are loaded
+        this._ready = false;
+        this._tile._content = null; // Reset contentAvailable to false
+        this._tile._contentState = Cesium3DTileContentState.LOADING;
+
         // Minimal logging - just track tile creation
         if (!BabylonModel3DTileContent._tileCount) BabylonModel3DTileContent._tileCount = 0;
         BabylonModel3DTileContent._tileCount++;
@@ -119,8 +125,9 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
             console.log(`🏗️ TILE ${BabylonModel3DTileContent._tileCount}: Starting async load (${this._arrayBuffer.byteLength} bytes)`);
         }
         
-        // Start async initialization like Cesium's fromGltf
-        this.initializeFromArrayBuffer();
+        // DEFERRED LOADING: Initialize but don't mark ready until meshes load
+        // This prevents race conditions and gaps during tile transitions
+        this.initializeFromArrayBufferSync();
     }
 
     /**
@@ -133,22 +140,39 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
     // Removed custom B3DM extraction - now using extracted B3dmParser
 
     /**
-     * Initialize model content from ArrayBuffer - simplified approach
+     * Initialize model content from ArrayBuffer - DEFERRED READY to prevent race conditions
+     * The key insight: tiles should NOT be marked ready until meshes are actually loaded
      */
-    private async initializeFromArrayBuffer(): Promise<void> {
-        try {
-            // console.log(`📋 ASYNC INIT START: tile=${this._tile.id || 'unknown'}, ready=${this._ready}`);
-            
-            // Loading tile content directly
-            await this.initializeDirectGLB();
-            
-            // console.log(`📋 ASYNC INIT COMPLETE: tile=${this._tile.id || 'unknown'}, ready=${this._ready}`);
-        } catch (error) {
-            console.error('Failed to initialize model content:', error);
+    private initializeFromArrayBufferSync(): void {
+        // CRITICAL: Do NOT mark as ready here - wait until actual loading completes
+        // This prevents contentAvailable=true before meshes exist, eliminating race conditions
+        
+        this.initializeDirectGLB().then(() => {
+            // NOW mark as ready - meshes are actually loaded
             this._ready = true;
-            console.log(`💥 ASYNC INIT ERROR: tile=${this._tile.id || 'unknown'}, ready=${this._ready}`);
-        }
+            
+            // CESIUM PATTERN: Set tile._content so contentAvailable becomes true
+            this._tile.hasRenderableContent = true;
+            this._tile._content = this;
+            this._tile._contentState = Cesium3DTileContentState.READY;
+            
+            // Visibility will be managed by the main tileset update loop
+            
+            // Only log first few completions to reduce spam
+            if (BabylonModel3DTileContent._completedTileCount < 44) {
+                BabylonModel3DTileContent._completedTileCount++;
+                console.log(`✅ TILE READY: ${BabylonModel3DTileContent._completedTileCount}/${BabylonModel3DTileContent._tileCount} complete, ${this._meshes?.length || 0} meshes`);
+            }
+        }).catch((error) => {
+            console.error('Failed to initialize model content:', error);
+            // Even on error, mark as ready to prevent hanging
+            this._ready = true;
+            this._tile._content = this;
+            this._tile._contentState = Cesium3DTileContentState.FAILED;
+        });
     }
+    
+    private static _completedTileCount: number = 0;
 
     /**
      * Fallback method for direct GLB loading using extracted B3dmParser

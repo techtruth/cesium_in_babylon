@@ -15,7 +15,7 @@ export class SimpleIntegration {
     private cesiumTileset?: MinimalTileset;
     private frameCount: number = 0;
     private debugSpheresEnabled: boolean = false; // Hidden by default
-    private frustumVisible: boolean = true; // Visible by default
+    private frustumVisible: boolean = false; // Hidden by default
     public staticFakeCamera: any; // Cache the static fake camera - only create once
     private staticCameraSphereCreated: boolean = false; // Track if camera sphere was created
     private currentMeshIndex: number = -1; // Track which mesh camera is looking at
@@ -56,9 +56,9 @@ export class SimpleIntegration {
             
             if (event.key === ' ') { // Spacebar
                 event.preventDefault(); // Prevent page scroll
-                console.log(`🔄 SPACEBAR PRESSED - Syncing fake camera to real camera...`);
-                this.syncFakeCameraToReal();
-                console.log(`✅ Camera sync complete!`);
+                console.log(`🎥 SPACEBAR PRESSED - Using REAL CAMERA MODE (no sync needed)`);
+                console.log(`   Current position: (${this.camera.position.x.toFixed(0)}, ${this.camera.position.y.toFixed(0)}, ${this.camera.position.z.toFixed(0)})`);
+                console.log(`   Tiles will update automatically based on camera movement!`);
             }
             
             if (event.key === '0') {
@@ -74,7 +74,7 @@ export class SimpleIntegration {
             }
         });
         
-        console.log(`🔘 Debug controls: 'b'=spheres, 'f'=frustum, SPACE=sync camera, '0'=meshes, ←→=cycle camera`);
+        console.log(`🔘 Debug controls: 'b'=spheres, 'f'=frustum, SPACE=camera info, '0'=meshes, ←→=cycle camera`);
     }
 
     /**
@@ -435,11 +435,15 @@ export class SimpleIntegration {
         const debugFrustum = this.frameCount % 600 === 0; // Debug every 10 seconds
         // Using Cesium's exact default frustum values for Earth-scale 3D tilesets
         
-        // Create STATIC fake camera ONLY ONCE - cache it to avoid recreating each frame
-        // RACE CONDITION FIX: Wait longer for tileset and requests to fully stabilize
-        if (!this.staticFakeCamera && this.frameCount > 10 && this.cesiumTileset?.ready) {
-            // Create STATIC fake camera at REAL camera's position (once set)
-            const babylonCameraPosition = this.camera.position.clone(); // Use real camera position
+        // 🎥 REAL CAMERA MODE: Use actual Babylon camera position and direction every frame
+        // This makes tiles respond to real camera movement and rotation
+        if (this.frameCount > 10 && this.cesiumTileset?.ready) {
+            // Log when real camera mode starts (only once)
+            if (!this.staticFakeCamera) {
+                console.log(`🎥 REAL CAMERA MODE ACTIVATED: Tiles will now respond to camera movement!`);
+            }
+            // Use CURRENT real camera position and direction (updates every frame)
+            const babylonCameraPosition = this.camera.position.clone(); // Live camera position
             
             // BABYLON-EXACT: Use the actual Babylon camera's direction vector
             const babylonDirection = this.camera.getDirection(Vector3.Forward()).normalize(); // Use real camera direction
@@ -447,22 +451,10 @@ export class SimpleIntegration {
             const babylonUp = this.camera.upVector.normalize(); // Use real camera up vector
             const babylonRight = Vector3.Cross(babylonDirection, babylonUp).normalize(); // Right vector
             
-            // console.log(`🔒 STATIC CAMERA INITIALIZED: Using REAL camera position = (${babylonCameraPosition.x}, ${babylonCameraPosition.y}, ${babylonCameraPosition.z})`);
-            // console.log(`🧭 BABYLON VECTORS:`);
-            // console.log(`   Position: (${babylonCameraPosition.x.toFixed(0)}, ${babylonCameraPosition.y.toFixed(0)}, ${babylonCameraPosition.z.toFixed(0)})`);
-            // console.log(`   Direction: (${babylonDirection.x.toFixed(3)}, ${babylonDirection.y.toFixed(3)}, ${babylonDirection.z.toFixed(3)})`);
-            // console.log(`   Up: (${babylonUp.x.toFixed(3)}, ${babylonUp.y.toFixed(3)}, ${babylonUp.z.toFixed(3)})`);
-            // console.log(`   Right: (${babylonRight.x.toFixed(3)}, ${babylonRight.y.toFixed(3)}, ${babylonRight.z.toFixed(3)})`);
-            
-            // console.log(`🗺️ COORDINATE TRANSFORMATION WILL BE:`);
-            // console.log(`   Position: Babylon(${babylonCameraPosition.x.toFixed(0)}, ${babylonCameraPosition.y.toFixed(0)}, ${babylonCameraPosition.z.toFixed(0)}) → Cesium(will calculate...)`);
-            // console.log(`   Direction: Babylon(${babylonDirection.x.toFixed(3)}, ${babylonDirection.y.toFixed(3)}, ${babylonDirection.z.toFixed(3)}) → Cesium(will calculate...)`);
-            
-            // COORDINATE TRANSFORMATION: Babylon (Y-up) back to Cesium (Z-up)
-            // console.log(`\n🔄 REVERSE TRANSFORMATION: Babylon → Cesium for tile selection`);
-            // console.log(`📍 INPUT: Babylon camera coordinates (Y-up, right-handed):`);
-            // console.log(`   Position:  (${babylonCameraPosition.x.toFixed(1)}, ${babylonCameraPosition.y.toFixed(1)}, ${babylonCameraPosition.z.toFixed(1)})`);
-            // console.log(`   Direction: (${babylonDirection.x.toFixed(3)}, ${babylonDirection.y.toFixed(3)}, ${babylonDirection.z.toFixed(3)})`);
+            if (debugFrustum) {
+                console.log(`🎥 REAL CAMERA MODE: Position = (${babylonCameraPosition.x.toFixed(0)}, ${babylonCameraPosition.y.toFixed(0)}, ${babylonCameraPosition.z.toFixed(0)})`);
+                console.log(`🧭 Direction: (${babylonDirection.x.toFixed(3)}, ${babylonDirection.y.toFixed(3)}, ${babylonDirection.z.toFixed(3)})`);
+            }
             
             // COORDINATE TRANSFORMATION: Babylon (Y-up) → Cesium (Z-up)
             // Transformation: (babylon_x, babylon_y, babylon_z) → (cesium_x, cesium_y, cesium_z)
@@ -523,7 +515,7 @@ export class SimpleIntegration {
             const isCorrectHemisphere = computedLon < 0 && computedLat > 0; // Western & Northern hemisphere
             console.log(`   Hemisphere check: ${isCorrectHemisphere ? '✅ CORRECT' : '❌ WRONG'} (NYC is Western/Northern)`);
             
-            // Store the static camera data for reuse - POSITION NEVER CHANGES
+            // Store the current camera data for this frame - POSITION CHANGES EVERY FRAME
             this.staticFakeCamera = {
                 babylonPosition: babylonCameraPosition,
                 babylonDirection: babylonDirection,
@@ -538,39 +530,31 @@ export class SimpleIntegration {
                 positionCartographic: computedCartographic
             };
             
-            // Log the final transformation results
-            console.log(`✅ COORDINATE TRANSFORMATION COMPLETE:`);
-            console.log(`   Position: → Cesium(${cesiumCameraPosition.x.toFixed(0)}, ${cesiumCameraPosition.y.toFixed(0)}, ${cesiumCameraPosition.z.toFixed(0)})`);
-            console.log(`   Direction: → Cesium(${cesiumDirection.x.toFixed(3)}, ${cesiumDirection.y.toFixed(3)}, ${cesiumDirection.z.toFixed(3)})`);
-        }
-        
-        // Get cached static camera data (positions NEVER change)
-        // RACE CONDITION FIX: Return early if camera not cached yet
-        if (!this.staticFakeCamera) {
+            // Log the final transformation results (only when debugging)
+            if (debugFrustum) {
+                console.log(`✅ COORDINATE TRANSFORMATION: Babylon → Cesium`);
+                console.log(`   Position: → Cesium(${cesiumCameraPosition.x.toFixed(0)}, ${cesiumCameraPosition.y.toFixed(0)}, ${cesiumCameraPosition.z.toFixed(0)})`);
+                console.log(`   Direction: → Cesium(${cesiumDirection.x.toFixed(3)}, ${cesiumDirection.y.toFixed(3)}, ${cesiumDirection.z.toFixed(3)})`);
+            }
+        } else {
             return; // Skip this frame, camera not ready
         }
         
+        // Get current camera data for this frame (recalculated every frame)
         const babylonCameraPosition = this.staticFakeCamera.babylonPosition;
         const babylonDirection = this.staticFakeCamera.babylonDirection;
         const babylonUp = this.staticFakeCamera.babylonUp;
         const babylonRight = this.staticFakeCamera.babylonRight;
         
-        // DISABLED: Frustum debug spam reduction 
+        // FRUSTUM DEBUG: Show current camera state
         if (debugFrustum) {
-            // console.log(`\n🔍 === FRUSTUM DEBUG ===`);
-            // console.log(`🗽 STATIC BABYLON CAMERA: position = (${babylonCameraPosition.x}, ${babylonCameraPosition.y}, ${babylonCameraPosition.z})`);
-            // console.log(`🌍 BABYLON DISTANCE from origin: ${babylonCameraPosition.length().toFixed(0)} units`);
-            // console.log(`🗽 CESIUM CONVERTED: position = (${this.staticFakeCamera.cesiumPosition.x}, ${this.staticFakeCamera.cesiumPosition.y}, ${this.staticFakeCamera.cesiumPosition.z})`);
-            // console.log(`🌍 CESIUM DISTANCE from origin: ${Cartesian3.magnitude(this.staticFakeCamera.cesiumPosition).toFixed(0)} units`);
-            
-            // 🔍 FRAMESTATE DEBUG: Verify what we're passing to the tileset
-            // console.log(`🔍 FRAMESTATE CAMERA DEBUG:`);
-            // console.log(`   frameState.camera.positionWC: (${this.staticFakeCamera.cesiumPosition.x}, ${this.staticFakeCamera.cesiumPosition.y}, ${this.staticFakeCamera.cesiumPosition.z})`);
-            // console.log(`   frameState.camera.position: (${this.staticFakeCamera.cesiumPosition.x}, ${this.staticFakeCamera.cesiumPosition.y}, ${this.staticFakeCamera.cesiumPosition.z})`);
-            // console.log(`   Camera positionCartographic: lon=${this.staticFakeCamera.positionCartographic.longitude.toFixed(4)}, lat=${this.staticFakeCamera.positionCartographic.latitude.toFixed(4)}, height=${this.staticFakeCamera.positionCartographic.height}`);
+            console.log(`\n🎥 === REAL CAMERA DEBUG ===`);
+            console.log(`🗽 LIVE BABYLON CAMERA: position = (${babylonCameraPosition.x.toFixed(0)}, ${babylonCameraPosition.y.toFixed(0)}, ${babylonCameraPosition.z.toFixed(0)})`);
+            console.log(`🌍 BABYLON DISTANCE from origin: ${babylonCameraPosition.length().toFixed(0)} units`);
+            console.log(`🗽 CESIUM CONVERTED: position = (${this.staticFakeCamera.cesiumPosition.x.toFixed(0)}, ${this.staticFakeCamera.cesiumPosition.y.toFixed(0)}, ${this.staticFakeCamera.cesiumPosition.z.toFixed(0)})`);
+            console.log(`🌍 CESIUM DISTANCE from origin: ${Cartesian3.magnitude(this.staticFakeCamera.cesiumPosition).toFixed(0)} units`);
             
             // CREATE FRUSTUM VISUALIZATION: Draw the actual frustum wireframe
-            // console.log(`🔺 CREATING FRUSTUM VISUALIZATION...`);
             this.createFrustumVisualization(babylonCameraPosition, babylonDirection, babylonUp, babylonRight, false);
         }
         
@@ -1401,6 +1385,86 @@ export class SimpleIntegration {
             statistics: this.cesiumTileset?.statistics,
             debugSpheresEnabled: this.debugSpheresEnabled
         };
+    }
+
+    /**
+     * DEBUG: Analyze a clicked tile mesh to understand why it might not be hidden
+     */
+    analyzePickedTile(pickedMesh: any) {
+        if (!this.cesiumTileset || !this.cesiumTileset._loadedTiles) {
+            console.log("   🔍 TILE ANALYSIS: No tileset or loaded tiles available");
+            return;
+        }
+
+        console.log("   🔍 TILE ANALYSIS: Searching for corresponding tile...");
+        
+        // Find the tile that owns this mesh by searching through loaded content
+        let foundTile = null;
+        for (const [tileId, tileContent] of this.cesiumTileset._loadedTiles) {
+            if (tileContent._meshes && tileContent._meshes.includes(pickedMesh)) {
+                foundTile = tileContent._tile;
+                break;
+            }
+        }
+
+        if (!foundTile) {
+            console.log("   ❌ Could not find corresponding tile for this mesh");
+            return;
+        }
+
+        // Analyze the found tile
+        const tile = foundTile;
+        const tileContent = tile._content;
+        
+        console.log("   📋 FOUND TILE INFO:");
+        console.log(`      Tile ID: ${tile.id || 'unknown'}`);
+        console.log(`      Depth: ${tile._depth}`);
+        console.log(`      Refine: ${tile.refine === 1 ? 'REPLACE' : 'ADD'}`);
+        console.log(`      Has children: ${tile.children?.length || 0}`);
+        console.log(`      Content available: ${tile.contentAvailable}`);
+        console.log(`      Content show: ${tileContent?.show}`);
+        console.log(`      Mesh visible: ${pickedMesh.isVisible}`);
+        console.log(`      SSE: ${tile._screenSpaceError?.toFixed(1)}`);
+        console.log(`      Distance: ${tile._distanceToCamera?.toFixed(0)}m`);
+
+        // If this tile has children, analyze why it's not hidden
+        if (tile.children && tile.children.length > 0) {
+            console.log("   👶 CHILDREN ANALYSIS:");
+            tile.children.forEach((child: any, i: number) => {
+                console.log(`      Child ${i+1}: contentAvailable=${child.contentAvailable}, SSE=${child._screenSpaceError?.toFixed(1)}, distance=${child._distanceToCamera?.toFixed(0)}m, visible=${child.isVisible}`);
+            });
+
+            const readyChildren = tile.children.filter((child: any) => child.contentAvailable);
+            if (readyChildren.length === 0) {
+                console.log("   ✅ PARENT CORRECTLY VISIBLE: No children are ready yet");
+            } else {
+                console.log(`   ⚠️ PARENT SHOULD BE HIDDEN: ${readyChildren.length}/${tile.children.length} children are ready but parent is still visible!`);
+            }
+        } else {
+            console.log("   ✅ LEAF TILE: No children, correctly visible");
+        }
+
+        // 👻 CLICK DEBUG: Make the clicked tile invisible for debugging
+        console.log("   👻 MAKING CLICKED TILE INVISIBLE for debugging...");
+        
+        // Hide the specific mesh that was clicked
+        pickedMesh.isVisible = false;
+        console.log(`   👻 Hidden clicked mesh: ${pickedMesh.name}`);
+        
+        // Also hide all meshes from the same tile content for complete debugging
+        for (const [tileId, tileContent] of this.cesiumTileset._loadedTiles) {
+            if (tileContent._meshes && tileContent._meshes.includes(pickedMesh)) {
+                tileContent._meshes.forEach((mesh: any) => {
+                    if (mesh && mesh !== pickedMesh) {
+                        mesh.isVisible = false;
+                        console.log(`   👻 Hidden tile mesh: ${mesh.name}`);
+                    }
+                });
+                break;
+            }
+        }
+        
+        console.log("   👻 Clicked tile is now invisible - you can see what's behind it!");
     }
 
     /**

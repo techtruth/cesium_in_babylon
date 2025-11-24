@@ -58,6 +58,7 @@ export default class MinimalTileset {
     private _scaledGeometricError: number = 0;
     
     private _cache: Cesium3DTilesetCache;
+    private _lastChildrenNotReadyLog?: number;
     private _statistics: Cesium3DTilesetStatistics;
     private _statisticsLast: Cesium3DTilesetStatistics;
     private _statisticsPerPass: Cesium3DTilesetStatistics[];
@@ -628,14 +629,22 @@ export default class MinimalTileset {
                 return child.contentAvailable;
             });
             
-            // DEBUG: Show why children might not be ready
+            // DEBUG: Show why children might not be ready (throttled to every 60 seconds)
             if (children.length > 0 && readyChildren.length === 0) {
-                const childStatus = children.slice(0, 2).map((child: any) => ({
-                    contentAvailable: child.contentAvailable,
-                    sse: child._screenSpaceError?.toFixed(1),
-                    distance: child._distanceToCamera?.toFixed(0)
-                }));
-                console.log(`   💭 Children not ready for parent (depth=${(parentTile as any)._depth}):`, childStatus);
+                const now = Date.now();
+                if (!this._lastChildrenNotReadyLog || (now - this._lastChildrenNotReadyLog) > 60000) {
+                    this._lastChildrenNotReadyLog = now;
+                    const childStatus = children.slice(0, 2).map((child: any) => ({
+                        contentAvailable: child.contentAvailable,
+                        sse: child._screenSpaceError?.toFixed(1),
+                        distance: child._distanceToCamera?.toFixed(0),
+                        isVisible: child.isVisible,
+                        hasTransform: !!child.computedTransform,
+                        hasContent: !!child._content,
+                        contentState: child._contentState
+                    }));
+                    console.log(`   💭 Children not ready for parent (depth=${(parentTile as any)._depth}):`, childStatus);
+                }
             }
             
             // Hide parent if ANY children are ready (partial replacement is better than low-res parent)
@@ -646,6 +655,9 @@ export default class MinimalTileset {
                 // DEBUG: Log parent hiding based on ready children
                 if (wasVisible) {
                     console.log(`🙈 HIDING PARENT: ${readyChildren.length}/${children.length} children ready, parent hidden (depth=${(parentTile as any)._depth})`);
+                } else {
+                    // Show that children are ready but parent already hidden
+                    console.log(`✅ CHILDREN READY: ${readyChildren.length}/${children.length} children ready for parent (depth=${(parentTile as any)._depth}), parent already hidden`);
                 }
             }
         }

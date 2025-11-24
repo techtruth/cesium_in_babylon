@@ -272,14 +272,17 @@ window.addEventListener('DOMContentLoaded', async () => {
             const pickedPoint = pointerInfo.pickInfo.pickedPoint;
             
             if (pickedMesh && pickedPoint) {
-                console.log(`Picked 3D Tile mesh: ${pickedMesh.name}`);
-                console.log(`Picked point:`, pickedPoint);
-                console.log(`Mesh position:`, pickedMesh.position);
-                console.log(`Mesh bounds:`, pickedMesh.getBoundingInfo());
+                console.log(`🎯 CLICKED 3D Tile mesh: ${pickedMesh.name}`);
+                console.log(`   Picked point:`, pickedPoint);
+                console.log(`   Mesh position:`, pickedMesh.position);
+                console.log(`   Mesh bounds:`, pickedMesh.getBoundingInfo());
+                
+                // DEBUG: Find and analyze the corresponding tile
+                integration.analyzePickedTile(pickedMesh);
                 
                 // Show stats when clicking
                 const stats = integration.getStats();
-                console.log("3D Tiles Stats:", stats);
+                console.log("   3D Tiles Stats:", stats);
             } else {
                 // Show all loaded meshes and their positions
                 const allMeshes = scene.meshes.filter(m => m.name.includes('tile'));
