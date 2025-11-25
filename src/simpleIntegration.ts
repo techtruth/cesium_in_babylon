@@ -62,10 +62,8 @@ export class SimpleIntegration {
         this.scene.autoClearDepthAndStencil = true;
         this.scene.skipPointerMovePicking = true; // Reduce precision-heavy operations
         
-        // CAMERA PRECISION: Optimized near/far planes for Earth viewing
-        this.camera.fov = Math.PI / 3; // 60 degrees - matches Cesium
-        this.camera.minZ = 0.01; // 1cm near plane for maximum precision
-        this.camera.maxZ = 20000000.0; // 20M km far plane (reduced from 50M for better precision)
+        // CAMERA PRECISION: Will be set by syncCameraSettings() to match Cesium exactly
+        // NOTE: Don't override camera settings here - let syncCameraSettings() handle it
         
         // ANIMATION PRECISION: Disable auto-animations that can cause jitter
         this.scene.animationPropertiesOverride = null;
@@ -81,6 +79,9 @@ export class SimpleIntegration {
         }
         
         console.log('🎯 Advanced Earth-scale precision configured: 1mm epsilon, logarithmic depth, optimized matrices');
+        
+        // CRITICAL: Ensure camera sync happens AFTER precision config
+        this.syncCameraSettings();
     }
 
     /**
@@ -129,10 +130,12 @@ export class SimpleIntegration {
      * CRITICAL: Make Babylon camera adopt Cesium's exact frustum parameters
      */
     private syncCameraSettings(): void {
-        // CESIUM AUTHORITATIVE: Use Cesium's exact default parameters
-        const cesiumFov = Math.PI / 3; // 60 degrees - Cesium's default
+        // CESIUM AUTHORITATIVE: Use Cesium's exact default parameters for Google 3D Tiles
+        const cesiumFov = Math.PI / 3; // 60 degrees - Cesium's default for Google tiles
         const cesiumNear = 1.0; // 1 meter - Cesium's default
         const cesiumFar = 500000000.0; // 500M km - Cesium's Earth-scale default
+        
+        console.log('🎥 CESIUM CAMERA SYNC: Ensuring exact match for Google 3D Tiles');
         
         // Get current Babylon camera settings
         const babylonFov = this.camera.fov;
@@ -184,6 +187,13 @@ export class SimpleIntegration {
         if (engineWidth !== canvasWidth || engineHeight !== canvasHeight) {
             console.log(`⚠️  ENGINE/CANVAS SIZE MISMATCH! This could cause edge coverage issues.`);
         }
+        
+        // GOOGLE TILES DEBUG: Log final camera parameters for Google tile frustum
+        console.log(`🎥 FINAL CAMERA FOR GOOGLE TILES:`);
+        console.log(`   FOV: ${(this.camera.fov * 180 / Math.PI).toFixed(1)}° (Babylon vertical)`);
+        console.log(`   Near: ${this.camera.minZ}m, Far: ${(this.camera.maxZ/1000000).toFixed(0)}Mkm`);
+        console.log(`   Aspect: ${aspect.toFixed(3)} (${engineWidth}×${engineHeight})`);
+        console.log(`   Expected for Google: FOV=60°, Near=1m, Far=500Mkm`);
     }
 
     /**
@@ -456,9 +466,11 @@ export class SimpleIntegration {
             // Create MinimalTileset with Babylon scene - CESIUM DEFAULT
             this.cesiumTileset = new MinimalTileset({
                 url: ionResource,
-                maximumScreenSpaceError: 16, // CESIUM DEFAULT: Keep standard SSE, rely on distance culling for control
+                maximumScreenSpaceError: 8, // GOOGLE 3D TILES: Lower SSE = higher quality, more aggressive tile loading
                 babylonScene: this.scene
             });
+            
+            console.log(`🎯 TILE LOADING FIX: SSE lowered to 8, request budget increased to 16 tiles/frame`);
             
             // Wait for it to be ready
             await this.cesiumTileset.readyPromise;

@@ -448,7 +448,7 @@ export default class MinimalTileset {
         });
         
         // Limit requests per frame
-        const maxRequestsPerFrame = 8;
+        const maxRequestsPerFrame = 16; // Increased from 8 for faster tile loading
         const frameBudget = Math.min(prioritizedTiles.length, maxRequestsPerFrame);
         
         let processedCount = 0;
