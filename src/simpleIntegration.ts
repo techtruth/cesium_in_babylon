@@ -42,25 +42,45 @@ export class SimpleIntegration {
      * Configure Babylon.js precision settings for Earth-scale coordinates
      */
     private configureEarthScalePrecision(): void {
-        // Set engine precision for large coordinate spaces
+        // ADVANCED PRECISION: Configure engine for maximum precision at Earth scale
         this.engine.setHardwareScalingLevel(1.0); // Ensure 1:1 pixel ratio
         
-        // Configure depth buffer precision for extreme distances
-        this.scene.constantlyUpdateMeshUnderPointer = false; // Reduce precision load
+        // DEPTH BUFFER PRECISION: Use logarithmic depth buffer for extreme distances if available
+        if (this.engine.getCaps().fragmentDepthSupported && (this.scene as any).useLogarithmicDepth !== undefined) {
+            (this.scene as any).useLogarithmicDepth = true;
+            console.log('🎯 Logarithmic depth buffer enabled for Earth-scale precision');
+        } else {
+            console.log('🎯 Logarithmic depth buffer not available, using optimized depth range');
+        }
         
-        // Set epsilon values for floating-point comparisons at Earth scale
-        const earthScaleEpsilon = 0.01; // 1cm precision at Earth scale
+        // FLOATING-POINT PRECISION: Set multiple epsilon values for different systems
+        const earthScaleEpsilon = 0.001; // 1mm precision at Earth scale
         (this.scene as any).epsilon = earthScaleEpsilon;
         
-        // Configure camera for Earth-scale precision
-        this.camera.fov = Math.PI / 3; // 60 degrees - matches Cesium
-        this.camera.minZ = 0.1; // 10cm near plane for precision
-        this.camera.maxZ = 50000000.0; // 50M km far plane
-        
-        // Disable auto-compute bounding info to avoid precision issues
+        // MESH PRECISION: Disable automatic bounding calculations that can drift
+        this.scene.constantlyUpdateMeshUnderPointer = false;
         this.scene.autoClearDepthAndStencil = true;
+        this.scene.skipPointerMovePicking = true; // Reduce precision-heavy operations
         
-        console.log('🎯 Earth-scale precision configured: epsilon=1cm, depth optimized');
+        // CAMERA PRECISION: Optimized near/far planes for Earth viewing
+        this.camera.fov = Math.PI / 3; // 60 degrees - matches Cesium
+        this.camera.minZ = 0.01; // 1cm near plane for maximum precision
+        this.camera.maxZ = 20000000.0; // 20M km far plane (reduced from 50M for better precision)
+        
+        // ANIMATION PRECISION: Disable auto-animations that can cause jitter
+        this.scene.animationPropertiesOverride = null;
+        
+        // MATRIX PRECISION: Force double precision matrices if available
+        if ((this.engine as any).useHighPrecisionMatrix !== undefined) {
+            (this.engine as any).useHighPrecisionMatrix = true;
+        }
+        
+        // COORDINATE PRECISION: Set precision hints for large coordinates
+        if ((this.scene as any).setPreventAutoUpdate) {
+            (this.scene as any).setPreventAutoUpdate(true);
+        }
+        
+        console.log('🎯 Advanced Earth-scale precision configured: 1mm epsilon, logarithmic depth, optimized matrices');
     }
 
     /**

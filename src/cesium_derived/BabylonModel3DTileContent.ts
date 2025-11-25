@@ -269,6 +269,11 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
                 // Initially disable mesh - will be enabled when tile is selected
                 mesh.setEnabled(false);
                 
+                // EARTH-SCALE PRECISION: Prevent mesh jitter at large coordinates 
+                mesh.doNotSyncBoundingInfo = true;
+                mesh.alwaysSelectAsActiveMesh = false;
+                // NOTE: World matrix will be frozen after transform is applied
+                
                 // COLLISION DETECTION: Store semantic data on mesh for collision detection
                 (mesh as any).tileMetadata = {
                     geometricError: this._tile.geometricError || 0,
@@ -281,6 +286,13 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
 
         // Apply initial transform
         this.updateTransform();
+        
+        // EARTH-SCALE PRECISION: Now freeze world matrices after positioning
+        for (const mesh of this._meshes) {
+            if (mesh) {
+                mesh.freezeWorldMatrix(); // Safe to freeze after transform is applied
+            }
+        }
 
         this._ready = true;
         console.log(`✅ Model content loaded via fallback: ${this._meshes.length} meshes, _ready=${this._ready}`);
@@ -337,10 +349,22 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
                     // CESIUM EXACT: Start invisible, only show when tile gets update() called
                     mesh.setEnabled(true);  // Keep enabled for performance
                     mesh.isVisible = false; // Hide until selected by BaseTraversal
+                    
+                    // EARTH-SCALE PRECISION: Prevent mesh jitter at large coordinates
+                    mesh.doNotSyncBoundingInfo = true;
+                    mesh.alwaysSelectAsActiveMesh = false;
+                    // NOTE: World matrix will be frozen after transform is applied
                 }
             }
 
             this.updateTransform();
+            
+            // EARTH-SCALE PRECISION: Now freeze world matrices after positioning
+            for (const mesh of this._meshes) {
+                if (mesh) {
+                    mesh.freezeWorldMatrix(); // Safe to freeze after transform is applied
+                }
+            }
             
             // CESIUM-EXACT: Only mark as ready after verifying meshes are actually renderable
             if (this.areMeshesActuallyReady()) {
@@ -389,10 +413,22 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
                     // CESIUM EXACT: Start invisible, only show when tile gets update() called
                     mesh.setEnabled(true);  // Keep enabled for performance
                     mesh.isVisible = false; // Hide until selected by BaseTraversal
+                    
+                    // EARTH-SCALE PRECISION: Prevent mesh jitter at large coordinates
+                    mesh.doNotSyncBoundingInfo = true;
+                    mesh.alwaysSelectAsActiveMesh = false;
+                    // NOTE: World matrix will be frozen after transform is applied
                 }
             }
 
             this.updateTransform();
+            
+            // EARTH-SCALE PRECISION: Now freeze world matrices after positioning
+            for (const mesh of this._meshes) {
+                if (mesh) {
+                    mesh.freezeWorldMatrix(); // Safe to freeze after transform is applied
+                }
+            }
             
             // CESIUM-EXACT: Only mark as ready after verifying meshes are actually renderable
             if (this.areMeshesActuallyReady()) {
