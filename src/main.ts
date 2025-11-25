@@ -265,14 +265,14 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     // Keyboard controls are set up inside the initialization block
 
-    // Add picking functionality for 3D tiles
+    // Add picking functionality for 3D tiles - RIGHT CLICK ONLY
     scene.onPointerObservable.add((pointerInfo) => {
-        if (pointerInfo.pickInfo?.hit && pointerInfo.type === 1) { // POINTERDOWN
+        if (pointerInfo.pickInfo?.hit && pointerInfo.type === 1 && pointerInfo.event?.button === 2) { // RIGHT CLICK POINTERDOWN
             const pickedMesh = pointerInfo.pickInfo.pickedMesh;
             const pickedPoint = pointerInfo.pickInfo.pickedPoint;
             
             if (pickedMesh && pickedPoint) {
-                console.log(`🎯 CLICKED 3D Tile mesh: ${pickedMesh.name}`);
+                console.log(`🎯 RIGHT-CLICKED 3D Tile mesh: ${pickedMesh.name}`);
                 console.log(`   Picked point:`, pickedPoint);
                 console.log(`   Mesh position:`, pickedMesh.position);
                 console.log(`   Mesh bounds:`, pickedMesh.getBoundingInfo());
@@ -280,7 +280,7 @@ window.addEventListener('DOMContentLoaded', async () => {
                 // DEBUG: Find and analyze the corresponding tile
                 integration.analyzePickedTile(pickedMesh);
                 
-                // Show stats when clicking
+                // Show stats when right-clicking
                 const stats = integration.getStats();
                 console.log("   3D Tiles Stats:", stats);
             } else {

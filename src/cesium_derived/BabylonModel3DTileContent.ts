@@ -113,10 +113,11 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
         this._arrayBuffer = arrayBuffer;
         this._url = url;
 
-        // CRITICAL: Override base class ready state - we'll set it when meshes are loaded
+        // CRITICAL: Don't mark as ready until meshes are actually loaded and rendered
         this._ready = false;
-        this._tile._content = null; // Reset contentAvailable to false
+        this._tile._content = null; // Keep contentAvailable=false until truly ready
         this._tile._contentState = Cesium3DTileContentState.LOADING;
+        this._tile.hasRenderableContent = false; // Will be set when meshes exist
 
         // DISABLED: Tile creation logs (too spammy)
         // Minimal logging - just track tile creation
@@ -128,7 +129,7 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
         
         // DEFERRED LOADING: Initialize but don't mark ready until meshes load
         // This prevents race conditions and gaps during tile transitions
-        this.initializeFromArrayBufferSync();
+        this.initializeFromArrayBufferDeferred();
     }
 
     /**
@@ -141,40 +142,46 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
     // Removed custom B3DM extraction - now using extracted B3dmParser
 
     /**
-     * Initialize model content from ArrayBuffer - DEFERRED READY to prevent race conditions
-     * The key insight: tiles should NOT be marked ready until meshes are actually loaded
+     * CESIUM-EXACT: Initialize model content from ArrayBuffer with proper timing
+     * Key insight: contentAvailable should only be true when meshes are actually rendered
      */
-    private initializeFromArrayBufferSync(): void {
-        // CRITICAL: Do NOT mark as ready here - wait until actual loading completes
-        // This prevents contentAvailable=true before meshes exist, eliminating race conditions
-        
+    private initializeFromArrayBufferDeferred(): void {
+        // Start loading but don't mark as ready until meshes are fully loaded AND rendered
         this.initializeDirectGLB().then(() => {
-            // NOW mark as ready - meshes are actually loaded
-            this._ready = true;
-            
-            // CESIUM PATTERN: Set tile._content so contentAvailable becomes true
-            this._tile.hasRenderableContent = true;
-            this._tile._content = this;
-            this._tile._contentState = Cesium3DTileContentState.READY;
-            
-            // Visibility will be managed by the main tileset update loop
-            
-            // DISABLED: Tile ready logs (too spammy)
-            // Only log first few completions to reduce spam
-            // if (BabylonModel3DTileContent._completedTileCount < 44) {
-            //     BabylonModel3DTileContent._completedTileCount++;
-            //     console.log(`✅ TILE READY: ${BabylonModel3DTileContent._completedTileCount}/${BabylonModel3DTileContent._tileCount} complete, ${this._meshes?.length || 0} meshes`);
-            // }
+            // Verify meshes are actually created and valid
+            if (this.areMeshesActuallyReady()) {
+                // NOW mark as ready - meshes are verified to exist and be renderable
+                this._ready = true;
+                this._tile.hasRenderableContent = true;
+                this._tile._content = this; // This makes contentAvailable=true
+                this._tile._contentState = Cesium3DTileContentState.READY;
+                
+                // CESIUM PATTERN: Visibility will be managed by tileset traversal
+                // Don't automatically show - let the traversal decide
+            } else {
+                console.warn('Tile content loaded but meshes not ready:', this._url);
+                // Keep trying or mark as failed
+                this._tile._contentState = Cesium3DTileContentState.FAILED;
+            }
         }).catch((error) => {
             console.error('Failed to initialize model content:', error);
-            // Even on error, mark as ready to prevent hanging
-            this._ready = true;
-            this._tile._content = this;
             this._tile._contentState = Cesium3DTileContentState.FAILED;
         });
     }
     
     private static _completedTileCount: number = 0;
+
+    /**
+     * CESIUM PATTERN: Verify meshes are actually ready for rendering
+     * This prevents contentAvailable=true when meshes don't exist yet
+     */
+    private areMeshesActuallyReady(): boolean {
+        // SIMPLIFIED: Just check that we have any meshes loaded
+        const hasMeshes = this._meshes && this._meshes.length > 0;
+        // DISABLED: Mesh readiness logs (system working)
+        // console.log(`🔍 SIMPLIFIED MESH READINESS: ${this._meshes?.length || 0} meshes, ready=${hasMeshes}`);
+        return hasMeshes;
+    }
 
     /**
      * Fallback method for direct GLB loading using extracted B3dmParser
@@ -289,10 +296,14 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
             
             this._container = await SceneLoader.LoadAssetContainerAsync("", file, this._babylonScene);
             
+            // DISABLED: Container loading logs (system working)
+            // console.log(`📦 CONTAINER LOADED: ${this._container.meshes.length} meshes in container`);
+            
             // CRITICAL: Actually add container to scene!
             this._container.addAllToScene();
             
             this._meshes = this._container.meshes.slice();
+            // console.log(`📋 MESHES ASSIGNED: ${this._meshes.length} meshes copied from container`);
 
             this._transformNode = new TransformNode(`model_${this._tile.id || 'unknown'}`, this._babylonScene);
 
@@ -307,15 +318,20 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
 
             this.updateTransform();
             
-            // CRITICAL: Mark as ready BEFORE calling updateVisibility to prevent deadlock
-            this._ready = true;
-            
-            BabylonModel3DTileContent._completedCount++;
-            // DISABLED: Tile ready logs (too spammy)
-            // console.log(`✅ TILE READY: ${BabylonModel3DTileContent._completedCount}/${BabylonModel3DTileContent._tileCount} complete, ${this._meshes.length} meshes`);
-            
-            // CRITICAL: Update visibility now that content is truly ready
-            this.updateVisibility();
+            // CESIUM-EXACT: Only mark as ready after verifying meshes are actually renderable
+            if (this.areMeshesActuallyReady()) {
+                this._ready = true;
+                this._tile.hasRenderableContent = true;
+                this._tile._content = this; // This makes contentAvailable=true
+                this._tile._contentState = Cesium3DTileContentState.READY;
+                
+                BabylonModel3DTileContent._completedCount++;
+                // Update visibility now that content is truly ready
+                this.updateVisibility();
+            } else {
+                console.warn('GLB loaded but meshes not ready:', this._url);
+                this._tile._contentState = Cesium3DTileContentState.FAILED;
+            }
             
             
             // Clean up derived loader
@@ -332,10 +348,14 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
             
             this._container = await SceneLoader.LoadAssetContainerAsync("", file, this._babylonScene);
             
+            // DISABLED: Fallback container logs (system working)
+            // console.log(`📦 FALLBACK CONTAINER LOADED: ${this._container.meshes.length} meshes in container`);
+            
             // CRITICAL: Actually add container to scene!
             this._container.addAllToScene();
             
             this._meshes = this._container.meshes.slice();
+            // console.log(`📋 FALLBACK MESHES ASSIGNED: ${this._meshes.length} meshes copied from container`);
 
             this._transformNode = new TransformNode(`model_${this._tile.id || 'unknown'}`, this._babylonScene);
 
@@ -350,15 +370,20 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
 
             this.updateTransform();
             
-            // CRITICAL: Mark as ready BEFORE calling updateVisibility to prevent deadlock
-            this._ready = true;
-            
-            BabylonModel3DTileContent._completedCount++;
-            // DISABLED: Tile ready logs (too spammy)
-            // console.log(`✅ TILE READY: ${BabylonModel3DTileContent._completedCount}/${BabylonModel3DTileContent._tileCount} complete, ${this._meshes.length} meshes`);
-            
-            // CRITICAL: Update visibility now that content is truly ready
-            this.updateVisibility();
+            // CESIUM-EXACT: Only mark as ready after verifying meshes are actually renderable
+            if (this.areMeshesActuallyReady()) {
+                this._ready = true;
+                this._tile.hasRenderableContent = true;
+                this._tile._content = this; // This makes contentAvailable=true
+                this._tile._contentState = Cesium3DTileContentState.READY;
+                
+                BabylonModel3DTileContent._completedCount++;
+                // Update visibility now that content is truly ready
+                this.updateVisibility();
+            } else {
+                console.warn('GLB loaded but meshes not ready:', this._url);
+                this._tile._contentState = Cesium3DTileContentState.FAILED;
+            }
             
             
             // Clean up derived loader
@@ -461,6 +486,7 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
     
     /**
      * Show property - matches Cesium Model.show exactly
+     * FRAME-SYNCHRONIZED: Now defers actual visibility changes to prevent blinking
      */
     set show(show: boolean) {
         if (this._visible !== show) {

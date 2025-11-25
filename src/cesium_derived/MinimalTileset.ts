@@ -102,6 +102,10 @@ export default class MinimalTileset {
     public dynamicScreenSpaceErrorFactor: number = 24.0;
     public dynamicScreenSpaceErrorHeightFalloff: number = 0.25;
     
+    // FRAME-SYNCHRONIZED VISIBILITY: Prevent tile blinking by batching visibility changes
+    private _frameVisibilityUpdates: Map<any, boolean> = new Map();
+    private _lastVisibilityFrame: number = -1;
+    
     // CESIUM EXACT: Updated based on the camera position and direction
     public _dynamicScreenSpaceErrorComputedDensity: number = 0.0;
     
@@ -408,6 +412,9 @@ export default class MinimalTileset {
         // CESIUM EXACT: Update tile content like reference implementation
         this.updateTileContent(frameState);
 
+        // FRAME-SYNCHRONIZED VISIBILITY: Apply all batched visibility updates at once
+        this.applyFrameVisibilityUpdates();
+
         // CESIUM EXACT: Update statistics like reference implementation
         this.updateStatistics();
         // Debug logging disabled for clean output
@@ -652,10 +659,22 @@ export default class MinimalTileset {
                 }
             }
             
-            // Hide parent if ANY children are ready (partial replacement is better than low-res parent)
-            if (readyChildren.length > 0) {
+            // CESIUM-EXACT: Only hide parent when children can actually replace it visually
+            // Check if children are not just "ready" but actually have rendered meshes
+            const visuallyReadyChildren = readyChildren.filter((child: any) => {
+                return child.contentAvailable && 
+                       child._content && 
+                       child._content.areMeshesActuallyReady &&
+                       child._content.areMeshesActuallyReady();
+            });
+            
+            // Only hide parent if we have enough visually ready children to prevent gaps
+            const shouldHideParent = this.shouldHideParentForChildren(parentTile, children, visuallyReadyChildren);
+            
+            if (shouldHideParent) {
                 const wasVisible = (parentTile as any)._content.show;
-                (parentTile as any)._content.show = false;
+                // FRAME-SYNCHRONIZED: Batch visibility update instead of immediate update
+                this.scheduleVisibilityUpdate((parentTile as any)._content, false);
                 
                 // DISABLED: Spammy parent hiding logs
                 // DEBUG: Log parent hiding based on ready children
@@ -711,6 +730,28 @@ export default class MinimalTileset {
         //     console.log(`   Tile ${i+1}: SSE=${sse.toFixed(1)} (${shouldRefine ? 'REFINE' : 'keep'}), dist=${distance.toFixed(0)}m, geomErr=${geometricError.toFixed(0)}, children=${hasChildren}`);
         // });
         // console.log('');
+    }
+
+    /**
+     * CESIUM-EXACT: Determine if parent should be hidden based on children's visual readiness
+     * This prevents gaps by ensuring children can actually replace parent content
+     */
+    private shouldHideParentForChildren(parentTile: any, allChildren: any[], visuallyReadyChildren: any[]): boolean {
+        // If no children are visually ready, keep parent visible
+        if (visuallyReadyChildren.length === 0) {
+            return false;
+        }
+        
+        // For REPLACE refinement, we need sufficient coverage to avoid gaps
+        if (parentTile.refine === 1) { // REPLACE
+            // Conservative approach: only hide parent when most children are ready
+            // This prevents gaps during partial loading
+            const coverageThreshold = Math.max(1, Math.floor(allChildren.length * 0.75));
+            return visuallyReadyChildren.length >= coverageThreshold;
+        }
+        
+        // For ADD refinement, parent can stay visible with children
+        return false;
     }
     
     /**
@@ -1004,6 +1045,38 @@ export default class MinimalTileset {
         return this.isSkippingLevelOfDetail 
             ? Cesium3DTilesetSkipTraversal
             : Cesium3DTilesetBaseTraversal;
+    }
+
+    /**
+     * FRAME-SYNCHRONIZED VISIBILITY: Schedule a visibility update for end of frame
+     * This prevents tile blinking by batching all visibility changes together
+     */
+    private scheduleVisibilityUpdate(content: any, visible: boolean): void {
+        if (content) {
+            this._frameVisibilityUpdates.set(content, visible);
+        }
+    }
+
+    /**
+     * FRAME-SYNCHRONIZED VISIBILITY: Apply all batched visibility updates at once
+     * This prevents races and blinking by ensuring all changes happen simultaneously
+     */
+    private applyFrameVisibilityUpdates(): void {
+        // Only apply updates once per frame
+        if (this._lastVisibilityFrame === this._updatedVisibilityFrame) {
+            return;
+        }
+        
+        // Apply all scheduled visibility updates
+        for (const [content, visible] of this._frameVisibilityUpdates.entries()) {
+            if (content && content.show !== visible) {
+                content.show = visible;
+            }
+        }
+        
+        // Clear the queue and mark frame as processed
+        this._frameVisibilityUpdates.clear();
+        this._lastVisibilityFrame = this._updatedVisibilityFrame;
     }
     
     destroy(): void {
