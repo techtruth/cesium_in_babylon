@@ -109,7 +109,8 @@ export class BabylonTileContent {
                 if (this._tileset && this._tileset._loadedTiles) {
                     const tileId = this._tile.id || `tile_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
                     this._tileset._loadedTiles.set(tileId, this._tileContent);
-                    console.log(`📝 REGISTERED: Tile content ${tileId} added to _loadedTiles (total: ${this._tileset._loadedTiles.size})`);
+                    // DISABLED: Registration logs (too spammy)
+                    // console.log(`📝 REGISTERED: Tile content ${tileId} added to _loadedTiles (total: ${this._tileset._loadedTiles.size})`);
                 }
                 
                 // CESIUM PATTERN: Immediately mark as ready like Cesium does

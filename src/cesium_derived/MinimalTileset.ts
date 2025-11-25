@@ -398,7 +398,8 @@ export default class MinimalTileset {
             const visibleCount = this._selectedTiles.filter(tile => 
                 (tile as any).isVisible && (tile as any).contentAvailable
             ).length;
-            console.log(`Tiles: ${visibleCount}/${this._selectedTiles.length} visible`);
+            // DISABLED: Tiles visible count logs (too spammy)
+            // console.log(`Tiles: ${visibleCount}/${this._selectedTiles.length} visible`);
         }
 
         // CESIUM EXACT: Process tiles like Cesium does
@@ -521,24 +522,26 @@ export default class MinimalTileset {
                 depth: tile._depth,
                 sse: tile._screenSpaceError?.toFixed(1)
             }));
-            console.log(`📋 SELECTED TILES: ${this._selectedTiles.length} total, first 5:`, tileInfo);
+            // DISABLED: Selected tiles log (too spammy)
+            // console.log(`📋 SELECTED TILES: ${this._selectedTiles.length} total, first 5:`, tileInfo);
             
+            // DISABLED: Tile breakdown logs (too spammy)
             // Show parent vs child breakdown
-            const parentTiles = this._selectedTiles.filter((tile: any) => tile.children?.length > 0);
-            const leafTiles = this._selectedTiles.filter((tile: any) => !tile.children?.length);
-            console.log(`📊 TILE BREAKDOWN: ${parentTiles.length} parents + ${leafTiles.length} leaves = ${this._selectedTiles.length} total`);
+            // const parentTiles = this._selectedTiles.filter((tile: any) => tile.children?.length > 0);
+            // const leafTiles = this._selectedTiles.filter((tile: any) => !tile.children?.length);
+            // console.log(`📊 TILE BREAKDOWN: ${parentTiles.length} parents + ${leafTiles.length} leaves = ${this._selectedTiles.length} total`);
             
             // DEBUG: Show which tiles are actually visible in Babylon
-            console.log(`👁️ TILE VISIBILITY STATUS:`);
-            for (let i = 0; i < Math.min(3, this._selectedTiles.length); i++) {
-                const tile = this._selectedTiles[i];
-                const content = tile._content;
-                const contentShow = content ? content.show : 'no-content';
-                const depth = tile._depth || '?';
-                const childCount = tile.children ? tile.children.length : 0;
-                const refineType = tile.refine === 1 ? 'REPLACE' : 'ADD';
-                console.log(`   Tile ${i+1} (depth=${depth}): content.show=${contentShow}, children=${childCount}, refine=${refineType}`);
-            }
+            // console.log(`👁️ TILE VISIBILITY STATUS:`);
+            // for (let i = 0; i < Math.min(3, this._selectedTiles.length); i++) {
+            //     const tile = this._selectedTiles[i];
+            //     const content = tile._content;
+            //     const contentShow = content ? content.show : 'no-content';
+            //     const depth = tile._depth || '?';
+            //     const childCount = tile.children ? tile.children.length : 0;
+            //     const refineType = tile.refine === 1 ? 'REPLACE' : 'ADD';
+            //     console.log(`   Tile ${i+1} (depth=${depth}): content.show=${contentShow}, children=${childCount}, refine=${refineType}`);
+            // }
         }
         
         // CESIUM REFINEMENT: Filter tiles for REPLACE refinement
@@ -563,7 +566,8 @@ export default class MinimalTileset {
         });
         
         if (this._updatedVisibilityFrame % 300 === 0) {
-            console.log(`🎯 TILE FILTERING: ${this._selectedTiles.length} selected → ${tilesToUpdate.length} will be updated`);
+            // DISABLED: Tile filtering logs (too spammy)
+            // console.log(`🎯 TILE FILTERING: ${this._selectedTiles.length} selected → ${tilesToUpdate.length} will be updated`);
         }
         
         // Update only filtered tiles (prevents parent visibility in REPLACE refinement)
@@ -643,7 +647,8 @@ export default class MinimalTileset {
                         hasContent: !!child._content,
                         contentState: child._contentState
                     }));
-                    console.log(`   💭 Children not ready for parent (depth=${(parentTile as any)._depth}):`, childStatus);
+                    // DISABLED: Children not ready logs (too frequent)
+                    // console.log(`   💭 Children not ready for parent (depth=${(parentTile as any)._depth}):`, childStatus);
                 }
             }
             
@@ -652,13 +657,14 @@ export default class MinimalTileset {
                 const wasVisible = (parentTile as any)._content.show;
                 (parentTile as any)._content.show = false;
                 
+                // DISABLED: Spammy parent hiding logs
                 // DEBUG: Log parent hiding based on ready children
-                if (wasVisible) {
-                    console.log(`🙈 HIDING PARENT: ${readyChildren.length}/${children.length} children ready, parent hidden (depth=${(parentTile as any)._depth})`);
-                } else {
-                    // Show that children are ready but parent already hidden
-                    console.log(`✅ CHILDREN READY: ${readyChildren.length}/${children.length} children ready for parent (depth=${(parentTile as any)._depth}), parent already hidden`);
-                }
+                // if (wasVisible) {
+                //     console.log(`🙈 HIDING PARENT: ${readyChildren.length}/${children.length} children ready, parent hidden (depth=${(parentTile as any)._depth})`);
+                // } else {
+                //     // Show that children are ready but parent already hidden
+                //     console.log(`✅ CHILDREN READY: ${readyChildren.length}/${children.length} children ready for parent (depth=${(parentTile as any)._depth}), parent already hidden`);
+                // }
             }
         }
     }
@@ -691,19 +697,20 @@ export default class MinimalTileset {
      * Debug screen space error values to understand close-distance behavior
      */
     private debugScreenSpaceError(): void {
-        console.log(`\n📐 SSE DEBUG (threshold: ${this.memoryAdjustedScreenSpaceError}):`);
+        // DISABLED: SSE debug logs (too spammy)
+        // console.log(`\n📐 SSE DEBUG (threshold: ${this.memoryAdjustedScreenSpaceError}):`);
         
-        const selectedTiles = this._selectedTiles.slice(0, 3); // First 3 tiles
-        selectedTiles.forEach((tile: any, i: number) => {
-            const sse = tile._screenSpaceError || 0;
-            const distance = tile._distanceToCamera || 0;
-            const geometricError = tile.geometricError || 0;
-            const shouldRefine = sse > this.memoryAdjustedScreenSpaceError;
-            const hasChildren = tile.children && tile.children.length > 0;
-            
-            console.log(`   Tile ${i+1}: SSE=${sse.toFixed(1)} (${shouldRefine ? 'REFINE' : 'keep'}), dist=${distance.toFixed(0)}m, geomErr=${geometricError.toFixed(0)}, children=${hasChildren}`);
-        });
-        console.log('');
+        // const selectedTiles = this._selectedTiles.slice(0, 3); // First 3 tiles
+        // selectedTiles.forEach((tile: any, i: number) => {
+        //     const sse = tile._screenSpaceError || 0;
+        //     const distance = tile._distanceToCamera || 0;
+        //     const geometricError = tile.geometricError || 0;
+        //     const shouldRefine = sse > this.memoryAdjustedScreenSpaceError;
+        //     const hasChildren = tile.children && tile.children.length > 0;
+        //     
+        //     console.log(`   Tile ${i+1}: SSE=${sse.toFixed(1)} (${shouldRefine ? 'REFINE' : 'keep'}), dist=${distance.toFixed(0)}m, geomErr=${geometricError.toFixed(0)}, children=${hasChildren}`);
+        // });
+        // console.log('');
     }
     
     /**

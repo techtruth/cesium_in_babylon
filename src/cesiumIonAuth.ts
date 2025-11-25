@@ -20,7 +20,7 @@ export class CesiumIonAuth {
         try {
             Ion.defaultAccessToken = this.accessToken;
             this.isAuthenticated = true;
-            console.log('Cesium Ion authentication configured');
+            // console.log('Cesium Ion authentication configured');
         } catch (error) {
             console.error('Failed to setup Cesium Ion:', error);
             this.isAuthenticated = false;
@@ -45,7 +45,7 @@ export class CesiumIonAuth {
         
         try {
             const resource = await IonResource.fromAssetId(assetId);
-            console.log(`Successfully accessed Ion asset ${assetId}`);
+            // console.log(`Successfully accessed Ion asset ${assetId}`);
             return resource;
         } catch (error) {
             console.error(`Failed to access Ion asset ${assetId}:`, error);
@@ -109,7 +109,7 @@ export class CesiumIonAuth {
         try {
             // Test with Cesium World Terrain (public asset)
             const resource = await this.getIonResource(1);
-            console.log('Ion authentication test successful');
+            // console.log('Ion authentication test successful');
             return true;
         } catch (error) {
             console.error('Ion authentication test failed:', error);

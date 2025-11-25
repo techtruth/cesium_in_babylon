@@ -118,12 +118,13 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
         this._tile._content = null; // Reset contentAvailable to false
         this._tile._contentState = Cesium3DTileContentState.LOADING;
 
+        // DISABLED: Tile creation logs (too spammy)
         // Minimal logging - just track tile creation
         if (!BabylonModel3DTileContent._tileCount) BabylonModel3DTileContent._tileCount = 0;
         BabylonModel3DTileContent._tileCount++;
-        if (BabylonModel3DTileContent._tileCount <= 3) {
-            console.log(`🏗️ TILE ${BabylonModel3DTileContent._tileCount}: Starting async load (${this._arrayBuffer.byteLength} bytes)`);
-        }
+        // if (BabylonModel3DTileContent._tileCount <= 3) {
+        //     console.log(`🏗️ TILE ${BabylonModel3DTileContent._tileCount}: Starting async load (${this._arrayBuffer.byteLength} bytes)`);
+        // }
         
         // DEFERRED LOADING: Initialize but don't mark ready until meshes load
         // This prevents race conditions and gaps during tile transitions
@@ -158,11 +159,12 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
             
             // Visibility will be managed by the main tileset update loop
             
+            // DISABLED: Tile ready logs (too spammy)
             // Only log first few completions to reduce spam
-            if (BabylonModel3DTileContent._completedTileCount < 44) {
-                BabylonModel3DTileContent._completedTileCount++;
-                console.log(`✅ TILE READY: ${BabylonModel3DTileContent._completedTileCount}/${BabylonModel3DTileContent._tileCount} complete, ${this._meshes?.length || 0} meshes`);
-            }
+            // if (BabylonModel3DTileContent._completedTileCount < 44) {
+            //     BabylonModel3DTileContent._completedTileCount++;
+            //     console.log(`✅ TILE READY: ${BabylonModel3DTileContent._completedTileCount}/${BabylonModel3DTileContent._tileCount} complete, ${this._meshes?.length || 0} meshes`);
+            // }
         }).catch((error) => {
             console.error('Failed to initialize model content:', error);
             // Even on error, mark as ready to prevent hanging
@@ -309,7 +311,8 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
             this._ready = true;
             
             BabylonModel3DTileContent._completedCount++;
-            console.log(`✅ TILE READY: ${BabylonModel3DTileContent._completedCount}/${BabylonModel3DTileContent._tileCount} complete, ${this._meshes.length} meshes`);
+            // DISABLED: Tile ready logs (too spammy)
+            // console.log(`✅ TILE READY: ${BabylonModel3DTileContent._completedCount}/${BabylonModel3DTileContent._tileCount} complete, ${this._meshes.length} meshes`);
             
             // CRITICAL: Update visibility now that content is truly ready
             this.updateVisibility();
@@ -351,7 +354,8 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
             this._ready = true;
             
             BabylonModel3DTileContent._completedCount++;
-            console.log(`✅ TILE READY: ${BabylonModel3DTileContent._completedCount}/${BabylonModel3DTileContent._tileCount} complete, ${this._meshes.length} meshes`);
+            // DISABLED: Tile ready logs (too spammy)
+            // console.log(`✅ TILE READY: ${BabylonModel3DTileContent._completedCount}/${BabylonModel3DTileContent._tileCount} complete, ${this._meshes.length} meshes`);
             
             // CRITICAL: Update visibility now that content is truly ready
             this.updateVisibility();
@@ -461,11 +465,12 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
     set show(show: boolean) {
         if (this._visible !== show) {
             this._visible = show;
+            // DISABLED: Show setter logs (too spammy)
             if (BabylonModel3DTileContent._showSetterCount === undefined) BabylonModel3DTileContent._showSetterCount = 0;
             BabylonModel3DTileContent._showSetterCount++;
-            if (BabylonModel3DTileContent._showSetterCount <= 5) {
-                console.log(`🎬 SHOW SETTER: ${BabylonModel3DTileContent._showSetterCount} - show=${show}, ready=${this._ready}`);
-            }
+            // if (BabylonModel3DTileContent._showSetterCount <= 5) {
+            //     console.log(`🎬 SHOW SETTER: ${BabylonModel3DTileContent._showSetterCount} - show=${show}, ready=${this._ready}`);
+            // }
             
             // RACE CONDITION GUARD: Update visibility if ready OR if meshes are loaded
             if (this._ready || (this._meshes && this._meshes.length > 0)) {
@@ -572,11 +577,12 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
                 }
             }
             
+            // DISABLED: Mesh visibility logs (too spammy) 
             // DEBUG: Log when meshes are actually hidden
-            if (hiddenMeshCount > 0 && BabylonModel3DTileContent._meshVisibilityLogCount < 10) {
-                BabylonModel3DTileContent._meshVisibilityLogCount++;
-                console.log(`👻 MESHES HIDDEN: ${hiddenMeshCount} meshes set to isVisible=false (show=${this.show}, ready=${this._ready})`);
-            }
+            // if (hiddenMeshCount > 0 && BabylonModel3DTileContent._meshVisibilityLogCount < 10) {
+            //     BabylonModel3DTileContent._meshVisibilityLogCount++;
+            //     console.log(`👻 MESHES HIDDEN: ${hiddenMeshCount} meshes set to isVisible=false (show=${this.show}, ready=${this._ready})`);
+            // }
         }
     }
 
