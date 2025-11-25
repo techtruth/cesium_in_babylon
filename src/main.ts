@@ -216,6 +216,24 @@ window.addEventListener('DOMContentLoaded', async () => {
             earthMaterial.wireframe = true; // Show as wireframe so we can see through it
             earthEllipsoid.material = earthMaterial;
             
+            // SKY BARRIER: 5000m above Earth surface for camera boundary detection
+            const skyBarrierRadius = earthRadiusEquatorial + 5000; // 5000m above equatorial radius
+            const skyBarrier = MeshBuilder.CreateSphere("skyBarrier", {
+                diameter: skyBarrierRadius * 2,
+                segments: 32  // Lower resolution for performance
+            }, scene);
+            skyBarrier.position = Vector3.Zero();
+            skyBarrier.setEnabled(false); // Hide by default
+            
+            const skyMaterial = new StandardMaterial("skyMaterial", scene);
+            skyMaterial.diffuseColor = new Color3(0.8, 0.2, 0.2); // Red tint for visibility
+            skyMaterial.emissiveColor = new Color3(0.1, 0.05, 0.05); // Subtle red glow
+            skyMaterial.wireframe = true;
+            skyMaterial.alpha = 0.3; // Semi-transparent
+            skyBarrier.material = skyMaterial;
+            
+            console.log(`🌌 Sky barrier created at ${(skyBarrierRadius/1000).toFixed(0)}km radius (${5}km above Earth)`);
+            
             // NYC marker removed for cleaner debugging view
             
             // Green wireframe sphere at Earth center for reference - make it bigger

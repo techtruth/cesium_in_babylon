@@ -231,6 +231,22 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
         }
 
         console.log(`✅ B3dmParser: Extracted ${parsed.gltf.byteLength} bytes of glTF, batch length: ${parsed.batchLength}`);
+        
+        // SEMANTIC DATA: Extract feature/batch table information for collision detection
+        console.log('🏷️ B3DM Semantic Data:', {
+            batchLength: parsed.batchLength,
+            featureTableJSON: parsed.featureTableJSON ? Object.keys(parsed.featureTableJSON) : 'none',
+            batchTableJSON: parsed.batchTableJSON ? Object.keys(parsed.batchTableJSON) : 'none',
+            allKeys: Object.keys(parsed)
+        });
+        
+        // Store semantic data for collision detection  
+        (this as any)._semanticData = {
+            batchLength: parsed.batchLength || 0,
+            featureTableJSON: parsed.featureTableJSON,
+            batchTableJSON: parsed.batchTableJSON,
+            parsed: parsed
+        };
 
         // Use File object approach with parsed glTF data
         const file = new File([parsed.gltf], 'model.glb', { type: 'model/gltf-binary' });
@@ -252,6 +268,14 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
                 mesh.parent = this._transformNode;
                 // Initially disable mesh - will be enabled when tile is selected
                 mesh.setEnabled(false);
+                
+                // COLLISION DETECTION: Store semantic data on mesh for collision detection
+                (mesh as any).tileMetadata = {
+                    geometricError: this._tile.geometricError || 0,
+                    depth: (this._tile as any)._depth || 0,
+                    semanticData: (this as any)._semanticData,
+                    tileId: this._tile.id || 'unknown'
+                };
             }
         }
 

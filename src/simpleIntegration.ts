@@ -1,4 +1,4 @@
-import { Scene as BabylonScene, Camera, Engine, MeshBuilder, StandardMaterial, Color3, Vector3 } from '@babylonjs/core';
+import { Scene as BabylonScene, Camera, Engine, MeshBuilder, StandardMaterial, Color3, Vector3, AbstractMesh, Ray } from '@babylonjs/core';
 import { Cartesian3, Cartesian2, Plane, PerspectiveFrustum, Ellipsoid, BoundingSphere, Matrix4, SceneMode, CullingVolume, Intersect, Occluder, Cartographic } from 'cesium';
 import { CesiumIonAuth } from './cesiumIonAuth';
 import MinimalTileset from './cesium_derived/MinimalTileset';
@@ -26,6 +26,9 @@ export class SimpleIntegration {
         this.engine = engine;
         this.ionAuth = ionAuth || new CesiumIonAuth();
         
+        // PRECISION FIX: Configure Babylon.js for Earth-scale coordinates
+        this.configureEarthScalePrecision();
+        
         // CRITICAL: Ensure Babylon camera matches Cesium frustum exactly
         this.syncCameraSettings();
         
@@ -33,6 +36,31 @@ export class SimpleIntegration {
         this.setupDebugControls();
         
         // SimpleIntegration initialized
+    }
+
+    /**
+     * Configure Babylon.js precision settings for Earth-scale coordinates
+     */
+    private configureEarthScalePrecision(): void {
+        // Set engine precision for large coordinate spaces
+        this.engine.setHardwareScalingLevel(1.0); // Ensure 1:1 pixel ratio
+        
+        // Configure depth buffer precision for extreme distances
+        this.scene.constantlyUpdateMeshUnderPointer = false; // Reduce precision load
+        
+        // Set epsilon values for floating-point comparisons at Earth scale
+        const earthScaleEpsilon = 0.01; // 1cm precision at Earth scale
+        (this.scene as any).epsilon = earthScaleEpsilon;
+        
+        // Configure camera for Earth-scale precision
+        this.camera.fov = Math.PI / 3; // 60 degrees - matches Cesium
+        this.camera.minZ = 0.1; // 10cm near plane for precision
+        this.camera.maxZ = 50000000.0; // 50M km far plane
+        
+        // Disable auto-compute bounding info to avoid precision issues
+        this.scene.autoClearDepthAndStencil = true;
+        
+        console.log('🎯 Earth-scale precision configured: epsilon=1cm, depth optimized');
     }
 
     /**
@@ -455,6 +483,9 @@ export class SimpleIntegration {
         }
 
         this.frameCount++;
+
+        // 🚫 COLLISION DETECTION: Check for camera collisions with buildings and ground
+        this.checkCameraCollisions();
 
         // 🌍 EARTH-RELATIVE ORIENTATION: Make camera "down" point toward Earth center
         this.alignCameraDownToEarthCenter();
@@ -1753,5 +1784,227 @@ export class SimpleIntegration {
         }
 
         return camera;
+    }
+
+    /**
+     * 🚫 COLLISION DETECTION: Check for camera collisions with tiles based on semantic data
+     */
+    private checkCameraCollisions(): void {
+        // Create/update visible collision indicator
+        this.updateCollisionIndicator();
+        
+        // Check collision using the sphere's world position every few frames
+        if (this.frameCount % 3 === 0 && this.collisionIndicator) { // Check every 3 frames
+            const worldCollisionPoint = this.collisionIndicator.getAbsolutePosition();
+            
+            // DEBUG: Log once to confirm collision system is running
+            if (this.frameCount === 30) {
+                console.log("🔴 Collision system started - looking for collisions...");
+            }
+            
+            this.checkPointCollisions(worldCollisionPoint);
+        }
+    }
+
+    /**
+     * 🎯 VISUAL COLLISION INDICATOR: Create/update visible collision point
+     */
+    private collisionIndicator?: AbstractMesh;
+    
+    private updateCollisionIndicator(): void {
+        if (!this.collisionIndicator) {
+            // PRECISION FIX: Create simple sphere with minimal geometry to reduce distortion
+            this.collisionIndicator = MeshBuilder.CreateSphere("collisionIndicator", { 
+                diameter: 1,
+                segments: 6,  // Minimal segments for maximum precision
+                diameterX: 1, // Explicit uniform sizing
+                diameterY: 1,
+                diameterZ: 1
+            }, this.scene);
+            
+            const material = new StandardMaterial("collisionMaterial", this.scene);
+            material.diffuseColor = Color3.Red();
+            material.emissiveColor = Color3.Red().scale(0.5); // Subtle glow
+            material.wireframe = true; // Wireframe to see distortion better
+            material.backFaceCulling = false; // Visible from all angles
+            
+            // PRECISION: Disable automatic bounding box updates for stability
+            this.collisionIndicator.doNotSyncBoundingInfo = true;
+            this.collisionIndicator.alwaysSelectAsActiveMesh = false;
+            
+            this.collisionIndicator.material = material;
+            
+            // PRECISION FIX: Parent to camera for relative positioning
+            this.collisionIndicator.parent = this.camera;
+            
+            console.log('🎯 Collision indicator created with Earth-scale precision settings');
+        }
+        
+        // RELATIVE POSITIONING: Use camera-relative coordinates to avoid precision loss
+        // Position 5 units forward from camera in local coordinate space
+        this.collisionIndicator.position = new Vector3(0, 0, 5);
+        
+        // PRECISION: Force uniform scaling to prevent distortion from coordinate transforms
+        this.collisionIndicator.scaling = new Vector3(1, 1, 1);
+    }
+
+    /**
+     * 🌍 SPHERE COLLISION: Check collision with earthWGS84 and skyBarrier
+     */
+    private checkPointCollisions(collisionPoint: Vector3): void {
+        // Find the earthWGS84 and skyBarrier spheres
+        const earthSphere = this.scene.meshes.find(mesh => mesh.name === 'earthWGS84');
+        const skyBarrier = this.scene.meshes.find(mesh => mesh.name === 'skyBarrier');
+        
+        if (!earthSphere) {
+            if (this.frameCount === 33) {
+                console.log("❌ earthWGS84 sphere not found!");
+                console.log("Available meshes:", this.scene.meshes.map(m => m.name).join(', '));
+            }
+            return;
+        }
+        
+        if (this.frameCount === 33) {
+            console.log("✅ Found earthWGS84 sphere!");
+            
+            // DEBUG: Check for 3D tile meshes and compare positions
+            const tileMeshes = this.scene.meshes.filter(mesh => 
+                mesh.name.includes('tile') || mesh.name.includes('model')
+            );
+            if (tileMeshes.length > 0) {
+                console.log(`🏗️ Found ${tileMeshes.length} tile meshes - checking alignment:`);
+                const sampleTile = tileMeshes[0];
+                const tilePos = sampleTile.getAbsolutePosition();
+                const tileDistanceFromCenter = Vector3.Distance(tilePos, Vector3.Zero());
+                console.log(`   Sample tile distance from center: ${tileDistanceFromCenter.toFixed(0)}m`);
+                console.log(`   WSG sphere should be at: ~6,371,000m`);
+                console.log(`   Alignment difference: ${Math.abs(tileDistanceFromCenter - 6371000).toFixed(0)}m`);
+            } else {
+                console.log("🚫 No tile meshes found yet");
+            }
+        }
+        
+        // Use actual mesh collision detection instead of sphere approximation
+        // Cast a ray from collision point toward Earth center
+        const earthCenter = new Vector3(0, 0, 0); // Assuming Earth is centered at origin
+        const directionToCenter = earthCenter.subtract(collisionPoint).normalize();
+        const ray = new Ray(collisionPoint, directionToCenter);
+        
+        // Check if ray hits the actual WGS84 mesh surface
+        const hit = ray.intersectsMesh(earthSphere);
+        
+        let altitudeAboveSurface = 0;
+        if (hit.hit) {
+            altitudeAboveSurface = hit.distance;
+        } else {
+            // Fallback: if no hit, we're probably above the mesh
+            const distanceToCenter = Vector3.Distance(collisionPoint, earthCenter);
+            // Use a rough estimate based on your location - NYC area radius
+            const roughEarthRadius = 6371000; // Fallback only
+            altitudeAboveSurface = distanceToCenter - roughEarthRadius;
+        }
+        
+        // Debug info every few seconds to figure out the issue
+        if (this.frameCount % 120 === 0) { // Every 2 seconds
+            console.log(`🌍 WSG Debug:`);
+            console.log(`   Collision point: (${collisionPoint.x.toFixed(0)}, ${collisionPoint.y.toFixed(0)}, ${collisionPoint.z.toFixed(0)})`);
+            console.log(`   Ray cast toward Earth center`);
+            console.log(`   Ray hit mesh: ${hit.hit}, distance: ${hit.hit ? hit.distance.toFixed(0) : 'N/A'}`);
+            console.log(`   Altitude above WGS84 surface: ${altitudeAboveSurface.toFixed(0)}m`);
+        }
+        
+        // Only alert on actual collision (when altitude is negative = inside mesh)
+        if (altitudeAboveSurface < 0) {
+            console.log(`🌍 GROUND HIT - Penetrated Earth surface by ${Math.abs(altitudeAboveSurface).toFixed(0)}m`);
+        }
+        
+        // BARRIER SYSTEM: 5km safe zone between ground and sky barriers
+        // Use proper WGS84 ellipsoid dimensions (matches main.ts earthWGS84 creation)
+        const earthRadiusEquatorial = 6378137; // WGS84 equatorial radius in meters
+        const earthRadiusPolar = 6356752.314245; // WGS84 polar radius in meters
+        
+        // Calculate ellipsoid surface distance using proper ellipsoid math
+        const x = collisionPoint.x;
+        const y = collisionPoint.y; // This is the polar axis in Babylon (Y-up)
+        const z = collisionPoint.z;
+        
+        // WGS84 ellipsoid equation: x²/a² + y²/b² + z²/a² = 1
+        // Where a = equatorial radius, b = polar radius
+        const a = earthRadiusEquatorial; // X and Z axes (equatorial)
+        const b = earthRadiusPolar; // Y axis (polar)
+        
+        // Distance from ellipsoid surface (negative = inside, positive = outside)
+        const ellipsoidValue = (x*x)/(a*a) + (y*y)/(b*b) + (z*z)/(a*a);
+        const distanceFromCenter = Math.sqrt(x*x + y*y + z*z);
+        
+        // Approximate altitude above ellipsoid surface
+        const altitudeAboveEllipsoid = distanceFromCenter * (Math.sqrt(ellipsoidValue) - 1);
+        
+        const skyBarrierAltitude = 5000; // 5km above ellipsoid surface
+        
+        // Debug the barrier zones using proper ellipsoid calculations
+        if (this.frameCount % 120 === 0) { // Every 2 seconds
+            console.log(`🔍 Ellipsoid Barrier check: distance=${distanceFromCenter.toFixed(0)}m, altitude=${altitudeAboveEllipsoid.toFixed(0)}m`);
+            console.log(`   Ellipsoid value: ${ellipsoidValue.toFixed(4)} (1.0 = on surface, <1.0 = inside, >1.0 = outside)`);
+            console.log(`   Ground barrier: inside ellipsoid | Safe zone: 0m - ${skyBarrierAltitude}m | Sky barrier: > ${skyBarrierAltitude}m`);
+        }
+        
+        // Ground barrier: Inside WGS84 ellipsoid (ellipsoidValue < 1.0)
+        if (ellipsoidValue < 1.0) {
+            const penetrationDepth = Math.abs(altitudeAboveEllipsoid);
+            console.log(`🌍 GROUND BARRIER HIT - ${penetrationDepth.toFixed(0)}m inside WGS84 ellipsoid`);
+        }
+        
+        // Sky barrier: Beyond 5km altitude above ellipsoid surface
+        if (altitudeAboveEllipsoid > skyBarrierAltitude) {
+            const excessDistance = altitudeAboveEllipsoid - skyBarrierAltitude;
+            console.log(`🌌 SKY BARRIER HIT - ${excessDistance.toFixed(0)}m beyond safe distance`);
+        }
+    }
+
+    /**
+     * 🏷️ CLASSIFY TILE TYPE: Use semantic data and geometric properties to classify tiles
+     */
+    private classifyTileType(tileMetadata: any): string {
+        const { geometricError, depth, semanticData } = tileMetadata;
+        
+        // Check for semantic classification in batch table
+        if (semanticData?.batchTableJSON) {
+            const batchTable = semanticData.batchTableJSON;
+            
+            // Look for common semantic properties
+            if (batchTable.classification || batchTable.class || batchTable.type) {
+                const classification = batchTable.classification?.[0] || batchTable.class?.[0] || batchTable.type?.[0];
+                if (typeof classification === 'string') {
+                    const classLower = classification.toLowerCase();
+                    if (classLower.includes('building') || classLower.includes('structure')) return 'building';
+                    if (classLower.includes('ground') || classLower.includes('terrain')) return 'ground';
+                    if (classLower.includes('vegetation') || classLower.includes('tree')) return 'vegetation';
+                }
+            }
+            
+            // Check for other semantic properties
+            if (batchTable.height || batchTable.building_height) {
+                return 'building'; // Has height data, likely a building
+            }
+        }
+        
+        // Fallback to geometric heuristics
+        // Buildings: High detail (low geometric error), deeper in tree
+        if (geometricError < 50 && depth >= 3) {
+            return 'building';
+        }
+        
+        // Ground/terrain: Low detail (high geometric error), shallow depth
+        if (geometricError > 500 || depth <= 1) {
+            return 'ground';
+        }
+        
+        // Medium detail - could be vegetation or infrastructure
+        if (geometricError < 200) {
+            return 'vegetation';
+        }
+        
+        return 'unknown';
     }
 }
