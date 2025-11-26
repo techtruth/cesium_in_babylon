@@ -1,8 +1,8 @@
 import { Scene as BabylonScene, Camera, Engine, MeshBuilder, StandardMaterial, Color3, Vector3, AbstractMesh, Ray } from '@babylonjs/core';
-import { Cartesian3, Cartesian2, Plane, PerspectiveFrustum, Ellipsoid, BoundingSphere, Matrix4, SceneMode, CullingVolume, Intersect, Occluder, Cartographic } from 'cesium';
+import { Cartesian3, Cartesian2, Plane, PerspectiveFrustum, Ellipsoid, BoundingSphere, Matrix4, SceneMode, CullingVolume, Intersect, Occluder, Cartographic, EllipsoidalOccluder } from 'cesium';
 import { CesiumIonAuth } from './cesiumIonAuth';
 import MinimalTileset from './cesium_derived/MinimalTileset';
-import { EllipsoidalOccluder } from './cesium_extracted/EllipsoidalOccluder_extracted';
+// CESIUM NATIVE: EllipsoidalOccluder now imported directly from cesium above
 
 /**
  * Simple Cesium + Babylon integration - just tile selection and rendering

@@ -15,7 +15,7 @@
 import { defined } from 'cesium';
 import * as Cesium from 'cesium';
 const Cesium3DTileRefine = (Cesium as any).Cesium3DTileRefine;
-import { ManagedArray } from './ManagedArray_extracted';
+const ManagedArray = (Cesium as any).ManagedArray;
 import Cesium3DTilesetTraversal from './Cesium3DTilesetTraversal_extracted';
 
 function Cesium3DTilesetBaseTraversal() {}

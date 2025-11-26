@@ -25,21 +25,35 @@ Cesium's public API doesn't expose many critical internal classes that are essen
 
 ## Files
 
-- **ManagedArray_extracted.ts** - Array wrapper with manual length management
-  - Source: `@cesium/engine/Source/Core/ManagedArray.js`
-  - Used for efficient tile array management
+**Note**: Many modules that were previously extracted are now available in Cesium's public API and have been replaced with native imports.
 
-- **Cesium3DTilesetStatistics_extracted.ts** - Comprehensive performance statistics
-  - Source: `@cesium/engine/Source/Scene/Cesium3DTilesetStatistics.js` 
-  - Tracks rendering, loading, memory, and feature statistics
+### Still Extracted (Internal Cesium Dependencies)
 
-- **Cesium3DTilesetCache_extracted.ts** - LRU cache with doubly linked list
-  - Source: `@cesium/engine/Source/Scene/Cesium3DTilesetCache.js`
-  - Manages tile memory with efficient cache eviction
+- **Cesium3DTilesetBaseTraversal_extracted.ts** - Base traversal implementation
+  - Source: `@cesium/engine/Source/Scene/Cesium3DTilesetBaseTraversal.js`
+  - Core tile selection and refinement logic
 
-- **Cesium3DTilePass_extracted.ts** - Multi-pass rendering system
-  - Source: `@cesium/engine/Source/Scene/Cesium3DTilePass.js`
-  - Defines rendering passes (RENDER, PICK, SHADOW, etc.)
+- **Cesium3DTilesetSkipTraversal_extracted.ts** - Skip LOD traversal implementation  
+  - Source: `@cesium/engine/Source/Scene/Cesium3DTilesetSkipTraversal.js`
+  - Advanced traversal with level-of-detail skipping
+
+- **Cesium3DTilesetTraversal_extracted.ts** - Base traversal interface
+  - Source: `@cesium/engine/Source/Scene/Cesium3DTilesetTraversal.js`
+  - Abstract traversal patterns and utilities
+
+- **preprocess3DTileContent_extracted.ts** - Content type detection utilities
+  - Source: `@cesium/engine/Source/Scene/preprocess3DTileContent.js`
+  - Handles B3DM, PNTS, I3DM, CMPT content type detection
+
+### Replaced with Native Cesium (No Longer Extracted)
+
+- ~~**ManagedArray_extracted.ts**~~ → Now using `ManagedArray` from cesium package
+- ~~**Cesium3DTilesetStatistics_extracted.ts**~~ → Now using `Cesium3DTilesetStatistics` from cesium package  
+- ~~**Cesium3DTilePass_extracted.ts**~~ → Now using `Cesium3DTilePass` from cesium package
+- ~~**Cesium3DTileOptimizationHint_extracted.ts**~~ → Now using `Cesium3DTileOptimizationHint` from cesium package
+- ~~**EllipsoidalOccluder_extracted.ts**~~ → Now using `EllipsoidalOccluder` from cesium package
+- ~~**Cesium3DTileContentState_extracted.ts**~~ → Now using `Cesium3DTileContentState` from cesium package
+- ~~**Cesium3DTileRefine_extracted.ts**~~ → Now using `Cesium3DTileRefine` from cesium package
 
 
 ## Relationship to `cesium_derived/`

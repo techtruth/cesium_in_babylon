@@ -24,16 +24,22 @@ import {
     RequestState
 } from 'cesium';
 
+// CESIUM NAMESPACE: For accessing internal objects via type assertions
+import * as Cesium from 'cesium';
+
 // EXTRACTED CESIUM MODULES - Internal modules not exported by cesium
-import { ManagedArray } from '../cesium_extracted/ManagedArray_extracted';
-import { Cesium3DTilesetStatistics } from '../cesium_extracted/Cesium3DTilesetStatistics_extracted';
+// Note: ManagedArray now available in native Cesium (was unused here anyway)
+// CESIUM NATIVE: Using native Cesium3DTilesetStatistics
+const Cesium3DTilesetStatistics = (Cesium as any).Cesium3DTilesetStatistics;
 // TEMP: Revert cache import until we fix the file removal
 // import { Cesium3DTilesetCache } from '../cesium_extracted/Cesium3DTilesetCache_extracted_v2';
-import { Cesium3DTilePass, getPassOptions } from '../cesium_extracted/Cesium3DTilePass_extracted';
+// CESIUM NATIVE: Using native Cesium3DTilePass (includes getPassOptions method)
+const Cesium3DTilePass = (Cesium as any).Cesium3DTilePass;
+const { getPassOptions } = Cesium3DTilePass;
 // CESIUM NATIVE: Using native constants from cesium package instead of extracted versions
-// CESIUM EXTRACTED: Use proper traversal implementations
-import Cesium3DTilesetBaseTraversal from '../cesium_extracted/Cesium3DTilesetBaseTraversal_extracted';
-import Cesium3DTilesetSkipTraversal from '../cesium_extracted/Cesium3DTilesetSkipTraversal_extracted';
+// CESIUM NATIVE: Using native traversal implementations
+const Cesium3DTilesetBaseTraversal = (Cesium as any).Cesium3DTilesetBaseTraversal;
+const Cesium3DTilesetSkipTraversal = (Cesium as any).Cesium3DTilesetSkipTraversal;
 
 import { preprocess3DTileContent, Cesium3DTileContentType } from '../cesium_extracted/preprocess3DTileContent_extracted';
 import { BabylonTileContent } from '../BabylonTileContent';
@@ -62,9 +68,9 @@ export default class MinimalTileset {
     
     private _cache: Cesium3DTilesetCache;
     private _lastChildrenNotReadyLog?: number;
-    private _statistics: Cesium3DTilesetStatistics;
-    private _statisticsLast: Cesium3DTilesetStatistics;
-    private _statisticsPerPass: Cesium3DTilesetStatistics[];
+    private _statistics: InstanceType<typeof Cesium3DTilesetStatistics>;
+    private _statisticsLast: InstanceType<typeof Cesium3DTilesetStatistics>;
+    private _statisticsPerPass: InstanceType<typeof Cesium3DTilesetStatistics>[];
     
     public _updatedVisibilityFrame: number = 0;
     private _updatedModelMatrixFrame: number = 0;
