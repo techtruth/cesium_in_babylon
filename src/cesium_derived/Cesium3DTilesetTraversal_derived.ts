@@ -26,8 +26,9 @@
  */
 
 import { defined, Intersect, DeveloperError, Ellipsoid, Cartesian3 } from 'cesium';
+import * as Cesium from 'cesium';
+const Cesium3DTileRefine = (Cesium as any).Cesium3DTileRefine;
 import { Cesium3DTileOptimizationHint } from '../cesium_extracted/Cesium3DTileOptimizationHint_extracted';
-import { Cesium3DTileRefine } from '../cesium_extracted/Cesium3DTileRefine_extracted';
 
 function Cesium3DTilesetTraversal() {}
 

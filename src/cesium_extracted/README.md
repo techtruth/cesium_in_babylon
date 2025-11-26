@@ -41,9 +41,6 @@ Cesium's public API doesn't expose many critical internal classes that are essen
   - Source: `@cesium/engine/Source/Scene/Cesium3DTilePass.js`
   - Defines rendering passes (RENDER, PICK, SHADOW, etc.)
 
-- **Cesium3DTileContentState_extracted.ts** - Content lifecycle constants
-  - Source: `@cesium/engine/Source/Scene/Cesium3DTileContentState.js`
-  - States: UNLOADED, LOADING, PROCESSING, READY, EXPIRED, FAILED
 
 ## Relationship to `cesium_derived/`
 

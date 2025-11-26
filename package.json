@@ -15,6 +15,7 @@
   "dependencies": {
     "@babylonjs/core": "^8.36.1",
     "@babylonjs/loaders": "^8.36.1",
+    "@types/cesium": "^1.67.14",
     "cesium": "^1.135.0"
   }
 }

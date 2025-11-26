@@ -9,6 +9,9 @@ import {
     
     // 3D Tiles core
     Cesium3DTile,
+    Cesium3DTileContentState,
+    Cesium3DTileRefine,
+    Cesium3DTilesetCache,
     
     // Core math
     Cartesian3,
@@ -24,10 +27,10 @@ import {
 // EXTRACTED CESIUM MODULES - Internal modules not exported by cesium
 import { ManagedArray } from '../cesium_extracted/ManagedArray_extracted';
 import { Cesium3DTilesetStatistics } from '../cesium_extracted/Cesium3DTilesetStatistics_extracted';
-import { Cesium3DTilesetCache } from '../cesium_extracted/Cesium3DTilesetCache_extracted_v2';
+// TEMP: Revert cache import until we fix the file removal
+// import { Cesium3DTilesetCache } from '../cesium_extracted/Cesium3DTilesetCache_extracted_v2';
 import { Cesium3DTilePass, getPassOptions } from '../cesium_extracted/Cesium3DTilePass_extracted';
-import { Cesium3DTileContentState } from '../cesium_extracted/Cesium3DTileContentState_extracted';
-import { Cesium3DTileRefine } from '../cesium_extracted/Cesium3DTileRefine_extracted';
+// CESIUM NATIVE: Using native constants from cesium package instead of extracted versions
 // CESIUM EXTRACTED: Use proper traversal implementations
 import Cesium3DTilesetBaseTraversal from '../cesium_extracted/Cesium3DTilesetBaseTraversal_extracted';
 import Cesium3DTilesetSkipTraversal from '../cesium_extracted/Cesium3DTilesetSkipTraversal_extracted';
@@ -215,7 +218,7 @@ export default class MinimalTileset {
             this._statisticsPerPass[i] = new Cesium3DTilesetStatistics();
         }
         
-        // REFERENCE CLONE: Initialize cache system using extracted class
+        // CESIUM NATIVE: Initialize cache system using Cesium's actual implementation
         this._cache = new Cesium3DTilesetCache();
         
         // Initialize the tileset by loading the root

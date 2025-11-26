@@ -6,12 +6,14 @@ import {
     AssetContainer
 } from '@babylonjs/core';
 import { defined } from 'cesium'; // CESIUM MODULE: Import for clipping plane checks
+import * as Cesium from 'cesium';
+const Cesium3DTileContentState = (Cesium as any).Cesium3DTileContentState;
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
 import '@babylonjs/loaders/glTF';
 import { Babylon3DTileContentBase } from './Babylon3DTileContent';
 import { B3dmParserV2 } from './B3dmParser_v2';
 import { BabylonGltfLoader } from './BabylonGltfLoader_derived';
-import { Cesium3DTileContentState } from '../cesium_extracted/Cesium3DTileContentState_extracted';
+// CESIUM NATIVE: Using native constants from cesium package instead of extracted versions
 
 /**
  * CESIUM REFERENCE: @cesium/engine/Source/Scene/Model/Model3DTileContent.js
