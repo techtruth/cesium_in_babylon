@@ -41,7 +41,9 @@ const { getPassOptions } = Cesium3DTilePass;
 const Cesium3DTilesetBaseTraversal = (Cesium as any).Cesium3DTilesetBaseTraversal;
 const Cesium3DTilesetSkipTraversal = (Cesium as any).Cesium3DTilesetSkipTraversal;
 
-import { preprocess3DTileContent, Cesium3DTileContentType } from '../cesium_extracted/preprocess3DTileContent_extracted';
+// CESIUM NATIVE: preprocess3DTileContent and Cesium3DTileContentType now from cesium package
+const preprocess3DTileContent = (Cesium as any).preprocess3DTileContent;
+const Cesium3DTileContentType = (Cesium as any).Cesium3DTileContentType;
 import { BabylonTileContent } from '../BabylonTileContent';
 import { BabylonModel3DTileContent } from './BabylonModel3DTileContent';
 import { Scene as BabylonScene } from '@babylonjs/core';

@@ -1,10 +1,11 @@
 import { Scene as BabylonScene, AbstractMesh, MeshBuilder, Color3, StandardMaterial } from '@babylonjs/core';
 import { BabylonModel3DTileContent } from './cesium_derived/BabylonModel3DTileContent';
 import type { Babylon3DTileContentInterface } from './cesium_derived/Babylon3DTileContent';
-import { preprocess3DTileContent, Cesium3DTileContentType } from './cesium_extracted/preprocess3DTileContent_extracted';
 // CESIUM NATIVE: Import from cesium instead of extracted  
 import * as Cesium from 'cesium';
 const Cesium3DTileContentState = (Cesium as any).Cesium3DTileContentState;
+const preprocess3DTileContent = (Cesium as any).preprocess3DTileContent;
+const Cesium3DTileContentType = (Cesium as any).Cesium3DTileContentType;
 
 /**
  * BabylonTileContent - Follows the Cesium content pattern exactly
