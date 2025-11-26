@@ -122,7 +122,8 @@ window.addEventListener('DOMContentLoaded', async () => {
         // Note: This requires a valid Cesium Ion access token with Google access
         try {
             
-            await integration.loadGooglePhotorealistic3DTiles();
+            // Google Photorealistic 3D Tiles asset ID from Cesium Ion
+            await integration.loadGooglePhotorealistic3DTiles(2275207);
             // Google Photorealistic 3D Tiles loaded
             
             // Calculate proper NYC/Statue of Liberty coordinates using Cesium's WGS84 ellipsoid
@@ -264,17 +265,8 @@ window.addEventListener('DOMContentLoaded', async () => {
             // Reference objects created
             
         } catch (error) {
-            console.warn("Failed to load Google 3D Tiles, trying OSM Buildings:", error);
-            
-            // Try OSM Buildings instead
-            try {
-                await integration.loadOSMBuildings3DTiles();
-                // OSM Buildings 3D Tiles loaded
-                
-            } catch (osmError) {
-                console.error("Failed to load OSM Buildings as well:", osmError);
-                throw osmError; // Let the outer catch handle it
-            }
+            console.error("Failed to load Google Photorealistic 3D Tiles:", error);
+            throw error; // Let the outer catch handle it
         }
         
     } catch (error) {
