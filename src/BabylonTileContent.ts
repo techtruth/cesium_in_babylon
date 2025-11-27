@@ -19,6 +19,7 @@ const Cesium3DTileContentType = (Cesium as any).Cesium3DTileContentType;
 export class BabylonTileContent {
     private static debugLogCount: number = 0;
     private static showLogCount: number = 0;
+    private static lastHideLogTime: number = 0;
     private _babylonScene: BabylonScene;
     // Removed BabylonTilesOrchestrator - direct content creation like Cesium
     private _tile: any; // The Cesium3DTile that owns this content
@@ -35,6 +36,14 @@ export class BabylonTileContent {
         arrayBuffer: ArrayBuffer,
         tileset?: any  // MinimalTileset reference for content registration
     ) {
+        console.log('🏭 BABYLON FACTORY: Creating content for', tile._contentResource?.url?.split('/').pop()?.split('?')[0] || 'unknown', {
+            tileId: tile.id || 'unknown',
+            depth: tile._depth || 'unknown', 
+            initialContentState: tile._contentState,
+            initialHasRenderableContent: tile.hasRenderableContent,
+            arrayBufferSize: arrayBuffer.byteLength
+        });
+        
         this._babylonScene = babylonScene;
         // Direct initialization - no orchestrator needed
         this._tile = tile;
@@ -58,19 +67,17 @@ export class BabylonTileContent {
             const preprocessed = preprocess3DTileContent(this._arrayBuffer);
             
             if (preprocessed.contentType === Cesium3DTileContentType.EXTERNAL_TILESET) {
-                // CESIUM EXACT: External tileset - set flags like Cesium does
-                this._tile.hasTilesetContent = true;
-                this._tile.hasRenderableContent = false;  // Not renderable content
+                // External tileset - let Cesium handle the properties naturally
+                console.log(`🔗 EXTERNAL TILESET: Letting Cesium handle properties`);
                 this._ready = true;
                 return;
             }
             
-            // CESIUM PATTERN: Handle tiles with no renderable content (structural/placeholder tiles)
+            // Handle tiles with no renderable content (structural/placeholder tiles)
             if (!preprocessed.binaryPayload || preprocessed.binaryPayload.length === 0) {
-                // Empty content - this is a structural tile like Cesium handles
-                this._tile.hasRenderableContent = false;  // No renderable content
+                // Empty content - let Cesium determine properties naturally
+                console.log(`📦 STRUCTURAL TILE: No renderable content (${preprocessed.contentType}) - trusting Cesium`);
                 this._ready = true;
-                console.log(`📦 STRUCTURAL TILE: No renderable content (${preprocessed.contentType})`);
                 return;
             }
             
@@ -101,9 +108,8 @@ export class BabylonTileContent {
                 }
                 
                 if (!this._tileContent) {
-                    // Content creation failed - treat as structural tile
-                    console.warn(`⚠️ Content creation failed for: ${contentUri}`);
-                    this._tile.hasRenderableContent = false;
+                    // Content creation failed - let Cesium handle this naturally
+                    console.warn(`⚠️ Content creation failed for: ${contentUri} - trusting Cesium`);
                     this._ready = true;
                     return;
                 }
@@ -118,16 +124,22 @@ export class BabylonTileContent {
                 
                 // CESIUM PATTERN: Immediately mark as ready like Cesium does
                 // GLB loading happens async in background but doesn't block tile state transitions
+                
+                // TRUST CESIUM: Only set our internal ready flag, let Cesium handle tile properties
+                console.log(`🔍 CONTENT CREATED: Tile ${this._tile.id || 'unknown'} depth=${this._tile._depth} - trusting Cesium lifecycle`, {
+                    naturalHasRenderableContent: this._tile.hasRenderableContent,
+                    naturalContentState: this._tile._contentState,
+                    naturalContentAvailable: this._tile.contentAvailable
+                });
+                
+                // Only set our internal ready flag - let Cesium control tile properties
                 this._ready = true;
-                this._tile.hasRenderableContent = true;
-                this._tile._content = this; // CRITICAL: Set tile._content so contentAvailable becomes true
-                this._tile._contentState = Cesium3DTileContentState.READY;
-                // console.log(`🚀 SYNC: Tile immediately marked READY (contentState=${this._tile._contentState}, contentAvailable=${this._tile.contentAvailable})`);
+                
+                console.log(`🚀 BABYLON CONTENT READY: Tile ${this._tile.id || 'unknown'} depth=${this._tile._depth} - ready=${this._ready}, waiting for Cesium process() call`);
                 
             } else {
-                // Unsupported content type - treat as structural tile like Cesium does
-                console.log(`📦 UNSUPPORTED CONTENT: ${preprocessed.contentType} - treating as structural tile`);
-                this._tile.hasRenderableContent = false;
+                // Unsupported content type - let Cesium handle this naturally
+                console.log(`📦 UNSUPPORTED CONTENT: ${preprocessed.contentType} - letting Cesium handle`);
                 this._ready = true;
                 return;
             }
@@ -145,6 +157,11 @@ export class BabylonTileContent {
      * This is the key method that follows the Cesium pattern!
      */
     update(tileset: any, frameState: any): void {
+        // CESIUM LIFECYCLE TRACKING: Log when Cesium calls our update
+        if (this._ready && this._tile._contentState !== 3) { // Not READY yet
+            console.log(`🔄 CESIUM UPDATE: Tile ${this._tile.id || 'unknown'} depth=${this._tile._depth} - contentState=${this._tile._contentState}, ready=${this._ready}, contentAvailable=${this._tile.contentAvailable}`);
+        }
+        
         try {
             // State is now handled synchronously in initializeContent()
             // No async state transitions needed in update() method
@@ -172,18 +189,15 @@ export class BabylonTileContent {
                 this.show = true;
                 // Tile selection working - logging disabled
             } else {
-                // HORIZON CULLING DEBUG: Log when tiles are hidden due to not being selected
+                // HORIZON CULLING DEBUG: Rate-limit tile hiding logs to reduce spam
                 if (this._visible === true) {
-                    // Get tile position for debugging
-                    const boundingSphere = this._tile.boundingSphere;
-                    let positionDesc = "";
-                    if (boundingSphere && boundingSphere.center) {
-                        const center = boundingSphere.center;
-                        const earthDist = Math.sqrt(center.x*center.x + center.y*center.y + center.z*center.z);
-                        positionDesc = ` pos=(${center.x.toFixed(0)}, ${center.y.toFixed(0)}, ${center.z.toFixed(0)}), earthDist=${earthDist.toFixed(0)}m`;
+                    // Only log tile hiding every 5 seconds to avoid console spam
+                    const now = Date.now();
+                    if (!BabylonTileContent.lastHideLogTime || now - BabylonTileContent.lastHideLogTime > 5000) {
+                        const tileDesc = `depth=${this._tile._depth}, geomError=${this._tile.geometricError?.toFixed(0)}`;
+                        console.log(`🔴 HIDING TILES (${tileDesc}) - not in selected tiles (horizon culling working)`);
+                        BabylonTileContent.lastHideLogTime = now;
                     }
-                    const tileDesc = `depth=${this._tile._depth}, geomError=${this._tile.geometricError?.toFixed(0)}${positionDesc}`;
-                    console.log(`🔴 HIDING TILE (${tileDesc}) - not in selected tiles (horizon culling working)`);
                 }
                 this.show = false;
             }
@@ -267,14 +281,12 @@ export class BabylonTileContent {
         
         const hasSphere = !!tile.boundingSphere;
         const hasBox = !!tile.boundingVolume.boundingBox;
-        console.log(`🔍 Tile ${tile.id} bounding: sphere=${hasSphere}, box=${hasBox}, contentAvailable=${tile.contentAvailable}`);
         
         try {
             if (tile.boundingSphere) {
                 // CREATE WIREFRAME SPHERE for sphere bounding volume
                 const center = tile.boundingSphere.center;
                 const radius = tile.boundingSphere.radius;
-                console.log(`🔴 Creating SPHERE: center=(${center.x.toFixed(0)}, ${center.y.toFixed(0)}, ${center.z.toFixed(0)}), radius=${radius.toFixed(0)}`);
                 
                 this._debugSphere = MeshBuilder.CreateSphere(
                     `debug_tile_${tile.id || 'unknown'}`, 
@@ -285,14 +297,11 @@ export class BabylonTileContent {
                 // Position sphere using bounding sphere center: Cesium(X,Y,Z) → Babylon(X,Z,Y)
                 this._debugSphere.position.set(center.x, center.z, center.y);
                 
-                console.log(`🔴 Positioned sphere at Babylon(${center.x.toFixed(0)}, ${center.z.toFixed(0)}, ${center.y.toFixed(0)})`);
-                
             } else if (tile.boundingVolume?.boundingBox) {
                 // CREATE WIREFRAME BOX for box bounding volume
                 const box = tile.boundingVolume.boundingBox;
                 const center = box.center || {x: 0, y: 0, z: 0};
                 const halfSize = box.halfSize || {x: 1000, y: 1000, z: 1000};
-                console.log(`📦 Creating BOX: center=(${center.x.toFixed(0)}, ${center.y.toFixed(0)}, ${center.z.toFixed(0)}), size=(${(halfSize.x*2).toFixed(0)}, ${(halfSize.y*2).toFixed(0)}, ${(halfSize.z*2).toFixed(0)})`);
                 
                 this._debugSphere = MeshBuilder.CreateBox(
                     `debug_tile_${tile.id || 'unknown'}`,
@@ -306,8 +315,6 @@ export class BabylonTileContent {
                 
                 // Position box: Cesium(X,Y,Z) → Babylon(X,Z,Y)
                 this._debugSphere.position.set(center.x, center.z, center.y);
-                
-                console.log(`📦 Positioned box at Babylon(${center.x.toFixed(0)}, ${center.z.toFixed(0)}, ${center.y.toFixed(0)})`);
                 
             } else {
                 console.log(`❌ Tile ${tile.id} has unknown bounding volume type`);
@@ -333,8 +340,6 @@ export class BabylonTileContent {
             
             this._debugSphere.material = material;
             this._debugSphere.setEnabled(true);
-            
-            console.log(`🔴 Debug WIREFRAME sphere SHOWN for SELECTED tile ${tile.id || 'unknown'} at radius ${tile.boundingSphere.radius.toFixed(1)}m`);
         } catch (error) {
             console.error('Failed to create debug wireframe:', error);
         }
@@ -347,7 +352,6 @@ export class BabylonTileContent {
         if (this._debugSphere && this._debugSphere.isEnabled()) {
             // Hide the wireframe instead of disposing it (for performance)
             this._debugSphere.setEnabled(false);
-            console.log(`⚫ Debug wireframe HIDDEN for DESELECTED tile ${this._tile.id || 'unknown'}`);
         }
     }
 

@@ -115,11 +115,10 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
         this._arrayBuffer = arrayBuffer;
         this._url = url;
 
-        // CRITICAL: Don't mark as ready until meshes are actually loaded and rendered
-        this._ready = false;
-        this._tile._content = null; // Keep contentAvailable=false until truly ready
-        this._tile._contentState = Cesium3DTileContentState.LOADING;
-        this._tile.hasRenderableContent = false; // Will be set when meshes exist
+        // TRUST CESIUM: Only mark our internal content as ready, let Cesium control tile properties
+        // Async mesh loading happens in background but doesn't block tile traversal
+        this._ready = true;
+        // Removed manual tile property setting - let Cesium handle the lifecycle naturally
 
         // DISABLED: Tile creation logs (too spammy)
         // Minimal logging - just track tile creation
@@ -129,9 +128,15 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
         //     console.log(`🏗️ TILE ${BabylonModel3DTileContent._tileCount}: Starting async load (${this._arrayBuffer.byteLength} bytes)`);
         // }
         
-        // DEFERRED LOADING: Initialize but don't mark ready until meshes load
-        // This prevents race conditions and gaps during tile transitions
-        this.initializeFromArrayBufferDeferred();
+        console.log(`🚀 CONSTRUCTOR MODEL: Tile ${this._tile.id || 'unknown'} depth=${this._tile._depth} content created - trusting Cesium`, {
+            initialContentState: this._tile._contentState,
+            initialHasRenderableContent: this._tile.hasRenderableContent,
+            ready: this._ready
+        });
+        
+        // BACKGROUND LOADING: Meshes load async but don't block tile selection
+        // This matches how native Cesium handles content loading
+        this.initializeFromArrayBufferAsync();
     }
 
     /**
@@ -144,30 +149,18 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
     // Removed custom B3DM extraction - now using extracted B3dmParser
 
     /**
-     * CESIUM-EXACT: Initialize model content from ArrayBuffer with proper timing
-     * Key insight: contentAvailable should only be true when meshes are actually rendered
+     * CESIUM PATTERN: Initialize model content from ArrayBuffer in background
+     * Content is already marked as READY, meshes load async for performance
      */
-    private initializeFromArrayBufferDeferred(): void {
-        // Start loading but don't mark as ready until meshes are fully loaded AND rendered
+    private initializeFromArrayBufferAsync(): void {
+        // Load meshes in background - tile is already marked as ready for traversal
         this.initializeDirectGLB().then(() => {
-            // Verify meshes are actually created and valid
-            if (this.areMeshesActuallyReady()) {
-                // NOW mark as ready - meshes are verified to exist and be renderable
-                this._ready = true;
-                this._tile.hasRenderableContent = true;
-                this._tile._content = this; // This makes contentAvailable=true
-                this._tile._contentState = Cesium3DTileContentState.READY;
-                
-                // CESIUM PATTERN: Visibility will be managed by tileset traversal
-                // Don't automatically show - let the traversal decide
-            } else {
-                console.warn('Tile content loaded but meshes not ready:', this._url);
-                // Keep trying or mark as failed
-                this._tile._contentState = Cesium3DTileContentState.FAILED;
-            }
+            // Meshes loaded successfully - update visibility if tile is selected
+            console.log(`🎨 MESHES LOADED: ${this._meshes?.length || 0} meshes for tile ${this._tile.id || 'unknown'}`);
+            this.updateVisibility();
         }).catch((error) => {
-            console.error('Failed to initialize model content:', error);
-            this._tile._contentState = Cesium3DTileContentState.FAILED;
+            console.error('Failed to load model meshes (tile still selectable):', error);
+            // Don't mark as FAILED - tile can still be selected, just no meshes to show
         });
     }
     
@@ -368,20 +361,12 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
                 }
             }
             
-            // CESIUM-EXACT: Only mark as ready after verifying meshes are actually renderable
-            if (this.areMeshesActuallyReady()) {
-                this._ready = true;
-                this._tile.hasRenderableContent = true;
-                this._tile._content = this; // This makes contentAvailable=true
-                this._tile._contentState = Cesium3DTileContentState.READY;
-                
-                BabylonModel3DTileContent._completedCount++;
-                // Update visibility now that content is truly ready
-                this.updateVisibility();
-            } else {
-                console.warn('GLB loaded but meshes not ready:', this._url);
-                this._tile._contentState = Cesium3DTileContentState.FAILED;
-            }
+            // BACKGROUND COMPLETE: Meshes loaded successfully
+            BabylonModel3DTileContent._completedCount++;
+            console.log(`✅ MESHES READY: ${this._meshes.length} meshes loaded for tile ${this._tile.id || 'unknown'}`);
+            
+            // Update visibility in case tile is already selected
+            this.updateVisibility();
             
             
             // Clean up derived loader
@@ -432,20 +417,12 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
                 }
             }
             
-            // CESIUM-EXACT: Only mark as ready after verifying meshes are actually renderable
-            if (this.areMeshesActuallyReady()) {
-                this._ready = true;
-                this._tile.hasRenderableContent = true;
-                this._tile._content = this; // This makes contentAvailable=true
-                this._tile._contentState = Cesium3DTileContentState.READY;
-                
-                BabylonModel3DTileContent._completedCount++;
-                // Update visibility now that content is truly ready
-                this.updateVisibility();
-            } else {
-                console.warn('GLB loaded but meshes not ready:', this._url);
-                this._tile._contentState = Cesium3DTileContentState.FAILED;
-            }
+            // BACKGROUND COMPLETE: Meshes loaded successfully
+            BabylonModel3DTileContent._completedCount++;
+            console.log(`✅ MESHES READY: ${this._meshes.length} meshes loaded for tile ${this._tile.id || 'unknown'}`);
+            
+            // Update visibility in case tile is already selected
+            this.updateVisibility();
             
             
             // Clean up derived loader

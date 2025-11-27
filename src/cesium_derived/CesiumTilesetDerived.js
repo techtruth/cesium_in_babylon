@@ -3406,6 +3406,22 @@ function update(tileset, frameState, passStatistics, passOptions) {
   tileset._cullRequestsWhileMoving =
     tileset.cullRequestsWhileMoving && !tileset._modelMatrixChanged;
 
+  // DEBUG: Check root tile contentAvailable right before BaseTraversal executes (rate-limited)
+  if (tileset.root) {
+    const now = Date.now();
+    if (!tileset._lastPreTraversalLogTime || (now - tileset._lastPreTraversalLogTime) > 10000) {
+      console.log('🎯 PRE-BASETRAVERSAL: Root tile contentAvailable check:', {
+        contentAvailable: tileset.root.contentAvailable,
+        hasRenderableContent: tileset.root.hasRenderableContent,
+        contentReady: tileset.root.contentReady,
+        contentState: tileset.root._contentState,
+        hasContent: !!tileset.root._content,
+        traversalType: tileset.isSkippingLevelOfDetail ? 'SkipTraversal' : 'BaseTraversal'
+      });
+      tileset._lastPreTraversalLogTime = now;
+    }
+  }
+
   const ready = tileset
     .getTraversal(passOptions)
     .selectTiles(tileset, frameState);

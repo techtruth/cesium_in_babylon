@@ -2,7 +2,6 @@
 
 import './style.css'
 import { Engine, Scene, FreeCamera, Vector3, HemisphericLight } from '@babylonjs/core'
-import { CesiumIonAuth } from './cesiumIonAuth'
 import { SimpleIntegration } from './simpleIntegration'
 
 window.addEventListener('DOMContentLoaded', async () => {
@@ -23,7 +22,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         if (canvas.width !== displayWidth || canvas.height !== displayHeight) {
             canvas.width = displayWidth;
             canvas.height = displayHeight;
-            console.log(`📺 Canvas resized to: ${displayWidth}x${displayHeight}`);
+            // Silent canvas resize
         }
     }
     
@@ -101,21 +100,10 @@ window.addEventListener('DOMContentLoaded', async () => {
     camera.speed = cameraSpeedLevels[currentSpeedLevel];
     // Camera speed initialized
     
-    // Initialize Cesium Ion authentication
-    const ionAuth = new CesiumIonAuth();
-    
-    // Create the simple integration
-    const integration = new SimpleIntegration(scene, camera, engine, ionAuth);
+    // Create the simple integration (Ion auth now handled internally)
+    const integration = new SimpleIntegration(scene, camera, engine);
     
     try {
-        // Initializing Cesium Ion authentication
-        
-        // Test authentication first
-        const authTest = await ionAuth.testAuthentication();
-        if (!authTest) {
-            console.warn("Cesium Ion authentication may not be working properly");
-        }
-        
         // Loading 3D Tiles
         
         // Try loading Google Photorealistic 3D Tiles
@@ -136,28 +124,11 @@ window.addEventListener('DOMContentLoaded', async () => {
             // Use Cesium's proper ellipsoid calculations
             const { Cartesian3: CesiumCartesian3, Ellipsoid } = await import('cesium');
             
-            // COORDINATE DEBUG: Comprehensive logging for coordinate transformation analysis
-            console.log(`\n🔍 === COORDINATE TRANSFORMATION ANALYSIS ===`);
-            console.log(`📍 INPUT: NYC/Liberty Island coordinates`);
-            console.log(`   Longitude: ${(libertyLon * 180 / Math.PI).toFixed(6)}° (${libertyLon.toFixed(6)} radians)`);
-            console.log(`   Latitude:  ${(libertyLat * 180 / Math.PI).toFixed(6)}° (${libertyLat.toFixed(6)} radians)`);
-            console.log(`   Surface altitude: ${surfaceAltitude}m, Camera altitude: ${cameraAltitude}m`);
+            // Silent coordinate transformation - logging removed to reduce console spam
             
             // Get ECEF positions using Cesium's WGS84 ellipsoid
             const nycSurfaceCesium = CesiumCartesian3.fromRadians(libertyLon, libertyLat, surfaceAltitude);
             const cameraPositionCesium = CesiumCartesian3.fromRadians(libertyLon, libertyLat, cameraAltitude);
-            
-            console.log(`\n🌍 CESIUM ECEF COORDINATES (Z-up, right-handed):`);
-            console.log(`   Surface ECEF:  (${nycSurfaceCesium.x.toFixed(1)}, ${nycSurfaceCesium.y.toFixed(1)}, ${nycSurfaceCesium.z.toFixed(1)})`);
-            console.log(`   Camera ECEF:   (${cameraPositionCesium.x.toFixed(1)}, ${cameraPositionCesium.y.toFixed(1)}, ${cameraPositionCesium.z.toFixed(1)})`);
-            
-            // Verify ECEF coordinates are reasonable for NYC
-            const magnitude = Math.sqrt(nycSurfaceCesium.x**2 + nycSurfaceCesium.y**2 + nycSurfaceCesium.z**2);
-            console.log(`   ECEF magnitude: ${magnitude.toFixed(0)}m (Earth radius ~6,371,000m)`);
-            
-            // Convert back to lat/lon to verify calculation
-            const verifyCartographic = Ellipsoid.WGS84.cartesianToCartographic(nycSurfaceCesium);
-            console.log(`   VERIFICATION: lat=${(verifyCartographic.latitude * 180 / Math.PI).toFixed(6)}°, lon=${(verifyCartographic.longitude * 180 / Math.PI).toFixed(6)}°`);
             
             // COORDINATE TRANSFORMATION: Cesium ECEF (Z-up) → Babylon (Y-up, right-handed)
             // Transformation: (cesium_x, cesium_y, cesium_z) → (babylon_x, babylon_y, babylon_z)
@@ -165,15 +136,8 @@ window.addEventListener('DOMContentLoaded', async () => {
             const nycSurface = new Vector3(nycSurfaceCesium.x, nycSurfaceCesium.z, nycSurfaceCesium.y);
             const cameraPosition = new Vector3(cameraPositionCesium.x, cameraPositionCesium.z, cameraPositionCesium.y);
             
-            console.log(`\n🔄 BABYLON COORDINATES (Y-up, right-handed):`);
-            console.log(`   Surface:  (${nycSurface.x.toFixed(1)}, ${nycSurface.y.toFixed(1)}, ${nycSurface.z.toFixed(1)})`);
-            console.log(`   Camera:   (${cameraPosition.x.toFixed(1)}, ${cameraPosition.y.toFixed(1)}, ${cameraPosition.z.toFixed(1)})`);
-            console.log(`   Transform rule: Cesium(X,Y,Z) → Babylon(X,Z,Y)`);
-            console.log(`🔍 === END COORDINATE ANALYSIS ===\n`);
-            
             // Store NYC surface coordinates for spacebar functionality
             const nycSurfaceForFrameState = nycSurfaceCesium;
-            console.log(`NYC marker position: (${nycSurfaceForFrameState.x.toFixed(0)}, ${nycSurfaceForFrameState.y.toFixed(0)}, ${nycSurfaceForFrameState.z.toFixed(0)})`);
             
             // Set camera position and look down at NYC surface
             camera.position = cameraPosition;
@@ -233,7 +197,7 @@ window.addEventListener('DOMContentLoaded', async () => {
             skyMaterial.alpha = 0.3; // Semi-transparent
             skyBarrier.material = skyMaterial;
             
-            console.log(`🌌 Sky barrier created at ${(skyBarrierRadius/1000).toFixed(0)}km radius (${5}km above Earth)`);
+            // Silent sky barrier creation
             
             // NYC marker removed for cleaner debugging view
             
@@ -288,7 +252,7 @@ window.addEventListener('DOMContentLoaded', async () => {
                 console.log(`   Mesh bounds:`, pickedMesh.getBoundingInfo());
                 
                 // DEBUG: Find and analyze the corresponding tile
-                integration.analyzePickedTile(pickedMesh);
+                // integration.analyzePickedTile(pickedMesh); // Method not implemented yet
                 
                 // Show stats when right-clicking
                 const stats = integration.getStats();
@@ -329,10 +293,10 @@ window.addEventListener('DOMContentLoaded', async () => {
     const resizeObserver = new ResizeObserver((entries) => {
         for (const entry of entries) {
             if (entry.target === canvas) {
-                console.log(`📺 Canvas resized: ${entry.contentRect.width}x${entry.contentRect.height}`);
+                // Silent canvas resize
                 handleResize();
             } else if (entry.target === document.body) {
-                console.log(`📺 Viewport resized: ${entry.contentRect.width}x${entry.contentRect.height} (dev console opened/closed?)`);
+                // Silent viewport resize
                 // Delay slightly to let the canvas update
                 setTimeout(() => {
                     handleResize();
@@ -346,7 +310,6 @@ window.addEventListener('DOMContentLoaded', async () => {
     // Also observe the document body for viewport changes (dev console open/close)
     resizeObserver.observe(document.body);
     
-    // Integration ready - debug utilities available on window.integration and window.ionAuth
+    // Integration ready - debug utilities available on window.integration
     (window as any).integration = integration;
-    (window as any).ionAuth = ionAuth;
 });
