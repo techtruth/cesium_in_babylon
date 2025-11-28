@@ -1,7 +1,7 @@
 import { Camera, Engine, Vector3 } from '@babylonjs/core';
 import * as Cesium from 'cesium';
 import CesiumTilesetDerived from './cesium_derived/CesiumTilesetDerived.js';
-import { BabylonTileContent } from './BabylonTileContent';
+import { SimpleBabylonTileContent } from './SimpleBabylonTileContent';
 
 /**
  * Simple Cesium + Babylon integration - trust Cesium completely
@@ -44,6 +44,23 @@ export class SimpleIntegration {
     }
 
     /**
+     * Create a mock frameState for testing/debugging purposes
+     */
+    private createMockFrameState(): any {
+        const camera = this.createCesiumCamera();
+        if (!camera) return null;
+        
+        return {
+            camera: camera,
+            context: {
+                drawingBufferWidth: 1920,
+                drawingBufferHeight: 1080
+            },
+            frameNumber: this.frameCount
+        };
+    }
+
+    /**
      * Load Google Photorealistic 3D Tiles using Cesium's exact configuration
      */
     async loadGooglePhotorealistic3DTiles(assetId: number): Promise<void> {
@@ -52,39 +69,13 @@ export class SimpleIntegration {
             const resource = await Cesium.IonResource.fromAssetId(assetId);
             
             // OFFICIAL CESIUM GOOGLE 3D TILES CONFIG: Match createGooglePhotorealistic3DTileset exactly
+            console.log('🎯 Using minimal Google 3D Tiles config (only 3 settings, trust Cesium defaults)');
             this.cesiumTileset = await CesiumTilesetDerived.fromUrl(resource, {
-                // OFFICIAL: From createGooglePhotorealistic3DTileset.js
+                // ONLY the 3 settings from createGooglePhotorealistic3DTileset.js
                 cacheBytes: 1536 * 1024 * 1024,              // 1.5GB (Google-optimized)
                 maximumCacheOverflowBytes: 1024 * 1024 * 1024, // 1GB (Google-optimized)
-                enableCollision: true,                        // Official Google config
-                
-                // OFFICIAL: Cesium3DTileset defaults (confirmed from source)
-                maximumScreenSpaceError: 16,                  // Official default
-                skipLevelOfDetail: false,                     // Official: Uses BaseTraversal
-                baseScreenSpaceError: 1024,                   // Official default
-                skipScreenSpaceErrorFactor: 16,               // Official default
-                skipLevels: 1,                                // Official default
-                immediatelyLoadDesiredLevelOfDetail: false,   // Official default
-                loadSiblings: false,                          // Official default (changed from true)
-                
-                // STANDARD: Keep other working optimizations
-                cullWithChildrenBounds: true,
-                cullRequestsWhileMoving: true,                // Official default
-                cullRequestsWhileMovingMultiplier: 60.0,
-                preloadWhenHidden: false,
-                preloadFlightDestinations: true,
-                preferLeaves: false,
-                dynamicScreenSpaceError: true,                // Official default (re-enabled)
-                dynamicScreenSpaceErrorDensity: 2.0e-4,
-                dynamicScreenSpaceErrorFactor: 24.0,
-                dynamicScreenSpaceErrorHeightFalloff: 0.25,
-                progressiveResolutionHeightFraction: 0.3,
-                foveatedScreenSpaceError: true,
-                foveatedConeSize: 0.1,
-                foveatedMinimumScreenSpaceErrorRelaxation: 0.0,
-                foveatedTimeDelay: 0.2,
-                show: true,
-                shadows: 1  // ShadowMode.ENABLED
+                enableCollision: true                         // Official Google config
+                // Let Cesium use ALL other defaults - no overrides
             }) as CesiumTilesetDerived;
             
             console.log('Google Photorealistic 3D Tiles created, waiting for ready...');
@@ -249,7 +240,7 @@ export class SimpleIntegration {
                 });
                 console.log('   Root children states:', childrenStates);
                 
-                const readyChildren = childrenStates.filter(c => c.contentAvailable).length;
+                const readyChildren = childrenStates.filter((c: any) => c.contentAvailable).length;
                 console.log(`   Children progress: ${readyChildren}/${root.children.length} ready`);
             }
         }
@@ -549,15 +540,10 @@ export class SimpleIntegration {
     }
 
     /**
-     * BABYLON.JS: Replace native Cesium tile content with BabylonTileContent
-     * This intercepts tiles after native processing and replaces their content
+     * SIMPLIFIED: Analysis and debugging only - content replacement handled by factory
      */
-    private replaceTileContent(): void {
+    private analyzeProgress(): void {
         if (!this.cesiumTileset || !this.cesiumTileset.root) return;
-
-        // Get Babylon scene from camera
-        const babylonScene = this.camera.getScene();
-        const Cesium3DTileContentState = (Cesium as any).Cesium3DTileContentState;
 
         // PHASE 1: Log tile tree structure occasionally
         if (Date.now() % 5000 < 16) { // Every 5 seconds
@@ -584,42 +570,18 @@ export class SimpleIntegration {
                 }
             }
         }
-
-        // Traverse all tiles to find ones with native content that need replacement
-        this.traverseTilesForContentReplacement(this.cesiumTileset.root, babylonScene, Cesium3DTileContentState);
-        
-        // TEST: Basic execution flow logging
-        if (frameState.frameNumber % 1000 === 0) { // Every ~30 seconds at 30fps
-            console.log('🔍 UPDATE METHOD EXECUTION CHECK:', {
-                frameNumber: frameState.frameNumber,
-                hasFrameState: !!frameState,
-                methodCalled: true,
-                timestamp: Date.now()
-            });
-        }
         
         // SIMPLIFIED: Force debug every 3 seconds for more frequent debugging
         const now = Date.now();
         const lastDebugTime = (this as any)._lastDistanceDebugTime || 0;
         const timeSinceLastDebug = now - lastDebugTime;
         
-        // DEBUG: Log timing information occasionally
-        if (frameState.frameNumber % 500 === 0) { // Every ~15 seconds
-            console.log('⏰ TIMING DEBUG:', {
-                now: now,
-                lastDebugTime: lastDebugTime,
-                timeSinceLastDebug: timeSinceLastDebug,
-                shouldTrigger: timeSinceLastDebug > 3000,
-                frameNumber: frameState.frameNumber
-            });
-        }
-        
         // FORCE IMMEDIATE DEBUG on first few frames to test the code
-        const shouldForceDebug = frameState.frameNumber <= 10 || timeSinceLastDebug > 3000;
+        const shouldForceDebug = this.frameCount <= 10 || timeSinceLastDebug > 3000;
         
         if (shouldForceDebug) {
-            if (frameState.frameNumber <= 10) {
-                console.log('🚀 FORCING IMMEDIATE DEBUG - Frame', frameState.frameNumber);
+            if (this.frameCount <= 10) {
+                console.log('🚀 FORCING IMMEDIATE DEBUG - Frame', this.frameCount);
             }
             (this as any)._lastDistanceDebugTime = now;
             
@@ -636,7 +598,7 @@ export class SimpleIntegration {
                 }
                 
                 console.log('🚨 ROOT TILE DISTANCE DEBUG:', {
-                    frameNumber: frameState.frameNumber,
+                    frameNumber: this.frameCount,
                     hasDistanceToCamera: rootTile.distanceToCamera !== undefined,
                     distanceToCamera: rootTile.distanceToCamera,
                     geometricError: rootTile.geometricError
@@ -654,20 +616,21 @@ export class SimpleIntegration {
                     sphereRadius: boundingSphere?.radius
                 });
                 
-                // Check camera
+                // Check camera using the current frameState from update method  
+                const currentCamera = this.createCesiumCamera();
                 console.log('📷 CAMERA DEBUG:', {
-                    hasCamera: !!frameState.camera,
-                    hasPositionWC: !!frameState.camera?.positionWC,
-                    positionWC: frameState.camera?.positionWC,
-                    cameraType: frameState.camera?.constructor?.name || typeof frameState.camera
+                    hasCamera: !!currentCamera,
+                    hasPositionWC: !!currentCamera?.positionWC,
+                    positionWC: currentCamera?.positionWC,
+                    cameraType: currentCamera?.constructor?.name || typeof currentCamera
                 });
                 
                 // MANUAL DISTANCE CALCULATION TEST
-                if (boundingSphere && frameState.camera?.positionWC) {
+                if (boundingSphere && currentCamera?.positionWC) {
                     try {
                         const distance = Cesium.Cartesian3.distance(
                             boundingSphere.center, 
-                            frameState.camera.positionWC
+                            currentCamera.positionWC
                         );
                         const finalDistance = Math.max(0, distance - boundingSphere.radius);
                         
@@ -683,9 +646,10 @@ export class SimpleIntegration {
                     console.warn('⚠️ Cannot calculate manual distance - missing bounding sphere or camera position');
                 }
                 
-                // TEST: Try calling Cesium's distance method directly
+                // TEST: Try calling Cesium's distance method directly with a mock frameState
                 try {
-                    const cesiumDistance = rootTile.distanceToTile(frameState);
+                    const mockFrameState = this.createMockFrameState(); 
+                    const cesiumDistance = rootTile.distanceToTile(mockFrameState);
                     console.log('🎯 CESIUM distanceToTile() RESULT:', cesiumDistance);
                 } catch (error) {
                     console.error('❌ Cesium distanceToTile() failed:', error);
@@ -815,81 +779,6 @@ export class SimpleIntegration {
         }
     }
 
-    /**
-     * Recursively traverse tiles to replace native content with BabylonTileContent
-     */
-    private traverseTilesForContentReplacement(tile: any, babylonScene: any, Cesium3DTileContentState: any): void {
-        // Check if tile has native content that needs replacement with Babylon content
-        if (tile._content && 
-            tile._contentState === Cesium3DTileContentState.READY &&
-            !(tile._content instanceof BabylonTileContent)) {
-            
-            // Skip Empty3DTileContent - these are structural/placeholder tiles with no data
-            if (tile._content.constructor?.name === 'Empty3DTileContent') {
-                // Quiet down - only log empty tiles occasionally to avoid spam
-                if (Date.now() % 15000 < 16) { // Every 15 seconds
-                    console.log('📭 Skipping Empty3DTileContent (structural tile with no data)');
-                }
-                return;
-            }
-            
-            try {
-                // DEBUG: Log native content structure to understand what data is available
-                console.log('🔍 Native content structure:', {
-                    contentType: tile._content.constructor?.name,
-                    hasArrayBuffer: !!tile._content._arrayBuffer,
-                    hasRequest: !!tile._content._request,
-                    hasResource: !!tile._content._resource,
-                    hasUrl: !!tile._content._url,
-                    properties: Object.keys(tile._content).filter(key => !key.startsWith('_')),
-                    privateProperties: Object.keys(tile._content).filter(key => key.startsWith('_'))
-                });
-
-                // Try to extract ArrayBuffer from different possible locations in native content
-                let arrayBuffer = null;
-                
-                // Check common locations where Cesium might store the raw data
-                if (tile._content._arrayBuffer) {
-                    arrayBuffer = tile._content._arrayBuffer;
-                    console.log('📦 Found ArrayBuffer in _arrayBuffer property');
-                } else if (tile._content._request && tile._content._request.response) {
-                    arrayBuffer = tile._content._request.response;
-                    console.log('📦 Found ArrayBuffer in _request.response');
-                } else if (tile._content.arrayBuffer) {
-                    arrayBuffer = tile._content.arrayBuffer;
-                    console.log('📦 Found ArrayBuffer in arrayBuffer property');
-                } else {
-                    // If no ArrayBuffer found, create empty one and log warning
-                    arrayBuffer = new ArrayBuffer(0);
-                    console.warn('⚠️ No ArrayBuffer found in native content, using empty buffer');
-                }
-
-                console.log('📦 ArrayBuffer info:', {
-                    size: arrayBuffer?.byteLength || 0,
-                    type: arrayBuffer?.constructor?.name || 'null'
-                });
-                
-                // Create BabylonTileContent to replace native content
-                console.log(`🔄 REPLACING: Creating BabylonTileContent for tile ${tile.id || 'unknown'} with ${arrayBuffer?.byteLength || 0} bytes`);
-                const babylonContent = new BabylonTileContent(babylonScene, tile, arrayBuffer, this.cesiumTileset);
-                
-                // Replace the content
-                tile._content.destroy?.(); // Destroy native content if it has destroy method
-                tile._content = babylonContent;
-                
-                console.log(`🔄 Replaced native content with BabylonTileContent for tile`);
-            } catch (error) {
-                console.error('Failed to replace tile content:', error);
-            }
-        }
-
-        // Traverse child tiles
-        if (tile.children) {
-            for (const child of tile.children) {
-                this.traverseTilesForContentReplacement(child, babylonScene, Cesium3DTileContentState);
-            }
-        }
-    }
 
 
     /**
@@ -1006,31 +895,29 @@ export class SimpleIntegration {
         
         const babylonScene = this.camera.getScene();
         
-        // Hook common content type methods that might be used for Google 3D Tiles
-        const potentialMethods = ['b3dm', 'gltf', 'glb', 'model3d', 'model', 'createContent', 'create'];
-        let hooksApplied = 0;
+        // CESIUM EXACT PATTERN: Replace factory methods with our implementations
+        // Following the exact same approach as Cesium's Cesium3DTileContentFactory.js
         
-        potentialMethods.forEach(methodName => {
-            const originalMethod = Cesium3DTileContentFactory[methodName];
-            if (typeof originalMethod === 'function') {
-                Cesium3DTileContentFactory[methodName] = function(...args: any[]) {
-                    // Enhanced debugging: Log all factory calls with details
-                    const arrayBuffer = args.find((arg: any) => arg instanceof ArrayBuffer);
-                    const tile = args.find((arg: any) => arg && typeof arg === 'object' && arg.geometricError !== undefined);
-                    const tileset = args.find((arg: any) => arg && typeof arg === 'object' && arg.asset !== undefined);
-                    
-                    if (arrayBuffer && tile) {
-                        // Creating Babylon content
-                        return new BabylonTileContent(babylonScene, tile, arrayBuffer, tileset || this.cesiumTileset);
-                    }
-                    
-                    // Fall back to original method
-                    return originalMethod.apply(this, args);
-                };
-                
-                hooksApplied++;
-            }
-        });
+        // Store originals for fallback
+        const originalB3dm = Cesium3DTileContentFactory.b3dm;
+        const originalGlb = Cesium3DTileContentFactory.glb;
+        
+        // Replace B3DM factory method
+        Cesium3DTileContentFactory.b3dm = function(tileset: any, tile: any, resource: any, arrayBuffer: ArrayBuffer, byteOffset: number) {
+            console.log('🏭 CESIUM B3DM FACTORY: Called with Babylon override');
+            return SimpleBabylonTileContent.fromB3dm(tileset, tile, resource, arrayBuffer, byteOffset, babylonScene);
+        };
+        
+        // Replace GLB factory method  
+        Cesium3DTileContentFactory.glb = function(tileset: any, tile: any, resource: any, arrayBuffer: ArrayBuffer, byteOffset: number) {
+            console.log('🏭 CESIUM GLB FACTORY: Called with Babylon override');
+            
+            // Extract GLB data from the offset
+            const glbData = arrayBuffer.slice(byteOffset);
+            return SimpleBabylonTileContent.fromGltf(tileset, tile, resource, glbData, babylonScene);
+        };
+        
+        const hooksApplied = 2; // B3DM + GLB
         
         console.log(`✅ Babylon factory ready (${hooksApplied} methods hooked)`);
     }
@@ -1134,13 +1021,56 @@ export class SimpleIntegration {
                     // Trust Cesium's logic completely - just call original
                     const result = originalSelectTiles.call(this, tileset, frameState);
                     
-                    // Minimal logging only every 10 seconds to check progress
+                    // Minimal logging only every 10 seconds to check progress  
                     const shouldLog = frameState.frameNumber % 300 === 0;
                     if (shouldLog && tileset.root) {
                         console.log('🎯 Tile Selection Status:', {
                             selectedTiles: tileset.selectedTiles?.length || 0,
                             visitedTiles: tileset.statistics?.visited || 0
                         });
+                        
+                        // DEBUG: Why aren't tiles being selected despite being visited?
+                        const rootTile = tileset.root;
+                        if (rootTile && rootTile.children?.length > 0) {
+                            console.log('🔍 ROOT TILE DEBUG:', {
+                                hasChildren: rootTile.children.length,
+                                refine: rootTile.refine,
+                                contentAvailable: rootTile.contentAvailable,
+                                hasRenderableContent: rootTile.hasRenderableContent
+                            });
+                            
+                            // DETAILED HIERARCHY ANALYSIS: Check children and grandchildren
+                            console.log('🌳 DETAILED HIERARCHY ANALYSIS:');
+                            for (let i = 0; i < Math.min(2, rootTile.children.length); i++) {
+                                const child = rootTile.children[i];
+                                console.log(`📂 Child ${i} (depth 1):`, {
+                                    depth: child._depth,
+                                    contentAvailable: child.contentAvailable,
+                                    contentReady: child.contentReady,
+                                    hasRenderableContent: child.hasRenderableContent,
+                                    hasEmptyContent: child.hasEmptyContent,
+                                    contentType: child._content?.constructor?.name,
+                                    childCount: child.children?.length || 0,
+                                    isVisible: child._visible,
+                                    inRequestVolume: child._inRequestVolume
+                                });
+                                
+                                // Check grandchildren too - maybe our factory is creating content at wrong level
+                                if (child.children && child.children.length > 0) {
+                                    console.log(`  📁 Grandchildren of child ${i}:`);
+                                    for (let j = 0; j < Math.min(2, child.children.length); j++) {
+                                        const grandchild = child.children[j];
+                                        console.log(`    Grandchild ${j} (depth ${grandchild._depth}):`, {
+                                            contentAvailable: grandchild.contentAvailable,
+                                            hasRenderableContent: grandchild.hasRenderableContent,
+                                            contentType: grandchild._content?.constructor?.name,
+                                            isSimpleBabylonContent: grandchild._content instanceof SimpleBabylonTileContent,
+                                            contentReady: grandchild._content?.ready
+                                        });
+                                    }
+                                }
+                            }
+                        }
                     }
                     
                     return result;
