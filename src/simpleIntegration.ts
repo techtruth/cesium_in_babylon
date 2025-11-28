@@ -1,4 +1,4 @@
-import { Camera, Engine, Vector3 } from '@babylonjs/core';
+import { Camera, Engine, Vector3, Matrix, MeshBuilder, StandardMaterial, Color3, Scene } from '@babylonjs/core';
 import * as Cesium from 'cesium';
 import CesiumTilesetDerived from './cesium_derived/CesiumTilesetDerived.js';
 import { SimpleBabylonTileContent } from './SimpleBabylonTileContent';
@@ -44,6 +44,50 @@ export class SimpleIntegration {
     }
 
     /**
+     * Create Cesium camera with proper vector calculations
+     */
+    private createCesiumCamera(): any {
+        const babylonPos = this.camera.position;
+        const babylonDir = this.camera.getDirection(Vector3.Forward());
+        const babylonUp = this.camera.upVector || Vector3.Up();
+
+        // WORKING CONFIG: Left-handed Babylon with Y↔Z transformation
+        const ecefPosition = new Cesium.Cartesian3(babylonPos.x, babylonPos.z, babylonPos.y);
+        const ecefDirection = new Cesium.Cartesian3(babylonDir.x, babylonDir.z, babylonDir.y);
+        const ecefUp = new Cesium.Cartesian3(babylonUp.x, babylonUp.z, babylonUp.y);
+        
+        // ESSENTIAL: Calculate right vector using Cesium's cross product
+        const ecefRight = new Cesium.Cartesian3();
+        Cesium.Cartesian3.cross(ecefDirection, ecefUp, ecefRight);
+        
+        // Normalize all vectors properly for Cesium's consumption
+        Cesium.Cartesian3.normalize(ecefDirection, ecefDirection);
+        Cesium.Cartesian3.normalize(ecefUp, ecefUp);
+        Cesium.Cartesian3.normalize(ecefRight, ecefRight);
+
+        const aspectRatio = this.engine.getRenderWidth() / this.engine.getRenderHeight();
+        const frustum = new Cesium.PerspectiveFrustum({
+            fov: this.camera.fov,
+            aspectRatio: aspectRatio,
+            near: this.camera.minZ,
+            far: this.camera.maxZ
+        });
+
+        return {
+            position: ecefPosition,
+            direction: ecefDirection,
+            up: ecefUp,
+            right: ecefRight,
+            frustum: frustum,
+            // Essential properties for Cesium
+            positionWC: ecefPosition,
+            directionWC: ecefDirection,
+            upWC: ecefUp,
+            rightWC: ecefRight
+        };
+    }
+
+    /**
      * Create a mock frameState for testing/debugging purposes
      */
     private createMockFrameState(): any {
@@ -74,9 +118,15 @@ export class SimpleIntegration {
                 // ONLY the 3 settings from createGooglePhotorealistic3DTileset.js
                 cacheBytes: 1536 * 1024 * 1024,              // 1.5GB (Google-optimized)
                 maximumCacheOverflowBytes: 1024 * 1024 * 1024, // 1GB (Google-optimized)
-                enableCollision: true                         // Official Google config
+                enableCollision: true,                        // Official Google config
+                showCreditsOnScreen: false,                   // Disable credit overlay to prevent repeated downloads
+                
+                // Use default SSE for proper detail level selection
+                maximumScreenSpaceError: 16                  // Default value for proper detail selection
                 // Let Cesium use ALL other defaults - no overrides
             }) as CesiumTilesetDerived;
+            
+            // Credits disabled in creditDisplay to prevent image downloads
             
             console.log('Google Photorealistic 3D Tiles created, waiting for ready...');
             
@@ -118,19 +168,165 @@ export class SimpleIntegration {
 
         // REMOVED: No longer forcing hasRenderableContent - using proper empty content detection
 
-        // Create frameState exactly like Cesium Scene does
-        const camera = this.createCesiumCamera();
-        if (!camera) {
-            console.error('Failed to create Cesium camera');
-            return;
+        // Create simple camera directly for frameState
+        const babylonPos = this.camera.position;
+        const babylonDir = this.camera.getDirection(Vector3.Forward());
+        const babylonUp = this.camera.upVector || Vector3.Up();
+
+        // WORKING CONFIG: Left-handed Babylon with Y↔Z transformation (from working commit 1012957)
+        // Cesium ECEF (Z-up) ← Babylon (Y-up): (X, Y, Z) ← (X, Z, Y)  
+        const ecefPosition = new Cesium.Cartesian3(babylonPos.x, babylonPos.z, babylonPos.y);
+        const ecefDirection = new Cesium.Cartesian3(babylonDir.x, babylonDir.z, babylonDir.y);
+        const ecefUp = new Cesium.Cartesian3(babylonUp.x, babylonUp.z, babylonUp.y);
+        
+        // ESSENTIAL: Calculate right vector using Cesium's cross product (missing from current implementation)
+        const ecefRight = new Cesium.Cartesian3();
+        Cesium.Cartesian3.cross(ecefDirection, ecefUp, ecefRight);
+        
+        // Normalize all vectors properly for Cesium's consumption
+        Cesium.Cartesian3.normalize(ecefDirection, ecefDirection);
+        Cesium.Cartesian3.normalize(ecefUp, ecefUp);
+        Cesium.Cartesian3.normalize(ecefRight, ecefRight);
+        
+        // Calculate camera geographic position for debugging
+        const cartographic = Cesium.Cartographic.fromCartesian(ecefPosition, Cesium.Ellipsoid.WGS84);
+        const latDegrees = Cesium.Math.toDegrees(cartographic.latitude);
+        const lonDegrees = Cesium.Math.toDegrees(cartographic.longitude);
+        const altMeters = cartographic.height;
+        
+        // DEBUG camera vectors and direction analysis every 300 frames
+        if (this.frameCount % 300 === 0) {
+            console.log('📹 CAMERA VECTORS DEBUG:', {
+                babylonPos: { x: babylonPos.x.toFixed(1), y: babylonPos.y.toFixed(1), z: babylonPos.z.toFixed(1) },
+                babylonDir: { x: babylonDir.x.toFixed(3), y: babylonDir.y.toFixed(3), z: babylonDir.z.toFixed(3) },
+                babylonUp: { x: babylonUp.x.toFixed(3), y: babylonUp.y.toFixed(3), z: babylonUp.z.toFixed(3) },
+                ecefPos: { x: ecefPosition.x.toFixed(1), y: ecefPosition.y.toFixed(1), z: ecefPosition.z.toFixed(1) },
+                ecefDir: { x: ecefDirection.x.toFixed(3), y: ecefDirection.y.toFixed(3), z: ecefDirection.z.toFixed(3) },
+                ecefUp: { x: ecefUp.x.toFixed(3), y: ecefUp.y.toFixed(3), z: ecefUp.z.toFixed(3) },
+                ecefRight: { x: ecefRight.x.toFixed(3), y: ecefRight.y.toFixed(3), z: ecefRight.z.toFixed(3) },
+                transformation: 'Y↔Z applied + Right vector calculated'
+            });
+            
+            // ANALYZE: Where is camera actually looking in geographic terms?
+            const lookAtPoint = new Cesium.Cartesian3();
+            Cesium.Cartesian3.add(ecefPosition, Cesium.Cartesian3.multiplyByScalar(ecefDirection, 1000, new Cesium.Cartesian3()), lookAtPoint);
+            const lookAtCartographic = Cesium.Cartographic.fromCartesian(lookAtPoint);
+            
+            if (lookAtCartographic) {
+                const lookAtLat = Cesium.Math.toDegrees(lookAtCartographic.latitude);
+                const lookAtLon = Cesium.Math.toDegrees(lookAtCartographic.longitude);
+                console.log('🧭 CAMERA DIRECTION ANALYSIS:', {
+                    cameraAt: `${latDegrees.toFixed(4)}°, ${lonDegrees.toFixed(4)}°`,
+                    lookingToward: `${lookAtLat.toFixed(4)}°, ${lookAtLon.toFixed(4)}°`,
+                    expectedDirection: 'Should be looking toward Earth center (negative direction magnitude)',
+                    directionMagnitude: Cesium.Cartesian3.magnitude(ecefDirection).toFixed(3)
+                });
+                
+                // Check if looking away from or toward Earth
+                const earthCenter = new Cesium.Cartesian3(0, 0, 0);
+                const toEarthCenter = new Cesium.Cartesian3();
+                Cesium.Cartesian3.subtract(earthCenter, ecefPosition, toEarthCenter);
+                Cesium.Cartesian3.normalize(toEarthCenter, toEarthCenter);
+                
+                const dotProduct = Cesium.Cartesian3.dot(ecefDirection, toEarthCenter);
+                console.log('🌍 EARTH DIRECTION CHECK:', {
+                    dotProduct: dotProduct.toFixed(3),
+                    interpretation: dotProduct > 0 ? 'Looking toward Earth ✅' : 'Looking away from Earth ❌',
+                    recommendation: dotProduct <= 0 ? 'Direction vector may need to be inverted' : 'Direction is correct'
+                });
+            }
         }
+
+        // Vectors already normalized above
+
+        // Create simple frustum with debug logging
+        const aspectRatio = this.engine.getRenderWidth() / this.engine.getRenderHeight();
+        const frustum = new Cesium.PerspectiveFrustum({
+            fov: this.camera.fov,
+            aspectRatio: aspectRatio,
+            near: this.camera.minZ,
+            far: this.camera.maxZ
+        });
+        
+        // DEBUG frustum values every 180 frames
+        if (this.frameCount % 180 === 0) {
+            console.log('🎯 FRUSTUM DEBUG:', {
+                fov: this.camera.fov,
+                aspectRatio: aspectRatio.toFixed(2), 
+                near: this.camera.minZ,
+                far: this.camera.maxZ,
+                renderSize: `${this.engine.getRenderWidth()}x${this.engine.getRenderHeight()}`
+            });
+        }
+
+        // Create minimal camera object with only essentials
+        const camera = {
+            position: ecefPosition,
+            direction: ecefDirection,
+            up: ecefUp,
+            right: ecefRight,
+            frustum: frustum,
+            // Essential properties for Cesium
+            positionWC: ecefPosition,
+            directionWC: ecefDirection,
+            upWC: ecefUp,
+            rightWC: ecefRight
+        };
 
         let cullingVolume;
         try {
-            cullingVolume = camera.frustum.computeCullingVolume(camera.position, camera.direction, camera.up);
+            // Restore culling volume computation - Cesium requires this for tile visibility
+            cullingVolume = frustum.computeCullingVolume(ecefPosition, ecefDirection, ecefUp);
+            
+            // Validate culling volume has required methods
+            if (!cullingVolume || typeof cullingVolume.computeVisibilityWithPlaneMask !== 'function') {
+                console.error('❌ Invalid culling volume - missing computeVisibilityWithPlaneMask method');
+                return;
+            }
+            
+            // DEBUG: Log culling volume properties for analysis
+            if (this.frameCount % 180 === 0) {
+                console.log('🔍 CULLING VOLUME DEBUG (FIXED FRUSTUM):', {
+                    hasCullingVolume: !!cullingVolume,
+                    hasComputeVisibility: typeof cullingVolume.computeVisibilityWithPlaneMask === 'function',
+                    cullingVolumeType: cullingVolume.constructor?.name || 'unknown',
+                    frustumType: frustum.constructor?.name || 'unknown',
+                    frustumNear: frustum.near,
+                    frustumFar: frustum.far,
+                    frustumFov: (frustum.fov * 180 / Math.PI).toFixed(1) + '°',
+                    change: 'NEAR-CESIUM: near=2.0, far=500M (compromise for z-fighting)'
+                });
+            }
         } catch (error) {
-            console.error('Failed to compute culling volume:', error);
+            console.error('❌ Failed to compute culling volume:', error);
+            console.error('   This will break tile visibility - stopping update');
             return;
+        }
+
+        // VISUALIZE CESIUM FRUSTUM: Create visual markers in Babylon coordinate space
+        this.visualizeCesiumFrustum(camera, frustum);
+
+        // COORDINATE DEBUG - Already calculated above for camera direction analysis
+        
+        // Log every 60 frames (2 seconds) for faster feedback
+        if (this.frameCount % 60 === 0) {
+            console.log('🔍 COORDINATE VERIFICATION (NO TRANSFORMATIONS):');
+            console.log(`   Original Cesium ECEF: (1333425, -4663874, 4142833)`);
+            console.log(`   Babylon camera (direct): (${babylonPos.x.toFixed(0)}, ${babylonPos.y.toFixed(0)}, ${babylonPos.z.toFixed(0)})`);
+            console.log(`   → Sent to Cesium (direct): (${ecefPosition.x.toFixed(0)}, ${ecefPosition.y.toFixed(0)}, ${ecefPosition.z.toFixed(0)})`);
+            console.log(`   → Cesium interprets as: ${latDegrees.toFixed(4)}°, ${lonDegrees.toFixed(4)}°, ${altMeters.toFixed(0)}m`);
+            console.log(`   🎯 GOAL: Get tiles from NYC area (40.69°N, 74.04°W)`);
+            
+            const latError = Math.abs(latDegrees - 40.6892);
+            const lonError = Math.abs(lonDegrees - (-74.0445));
+            if (latError > 0.1 || lonError > 0.1) {
+                console.log(`   ❌ MAJOR MISMATCH: ${latError.toFixed(4)}° lat, ${lonError.toFixed(4)}° lon`);
+            } else {
+                console.log(`   ✅ Close to NYC: ${latError.toFixed(4)}° lat, ${lonError.toFixed(4)}° lon`);
+            }
+            
+            // GEOGRAPHIC BOUNDS DEBUG: Compare loaded tiles vs camera position
+            this.logTileGeographicMismatch(latDegrees, lonDegrees);
         }
 
         // Complete frameState matching working commit 72dfb2e, using Cesium's default SSE
@@ -142,7 +338,7 @@ export class SimpleIntegration {
             },
             cullingVolume: cullingVolume,
             mode: Cesium.SceneMode.SCENE3D,
-            frameNumber: ++this.frameCount,
+            frameNumber: this.frameCount,
             // CRITICAL: Add JulianDate time for BaseTraversal tile prioritization
             time: Cesium.JulianDate.now(),
             // CESIUM EXACT: newFrame flag - true only for actual new frames
@@ -151,10 +347,10 @@ export class SimpleIntegration {
             pass: (Cesium as any).Pass ? (Cesium as any).Pass.RENDER : 0,
             // Let Cesium use its default maximumScreenSpaceError for Google tiles
             tilesetPassState: this.renderTilesetPassState, // Required by CesiumTilesetDerived
-            // CREDIT DISPLAY: Enhanced implementation with clickable links and grouping
+            // CREDIT DISPLAY: Disabled to prevent image downloads
             creditDisplay: {
-                addCreditToNextFrame: (credit: any) => {
-                    this.displayCredit(credit);
+                addCreditToNextFrame: (_credit: any) => {
+                    // Don't process credits to avoid downloading credit images
                 }
             },
             // Additional properties from working commit 72dfb2e:
@@ -169,6 +365,24 @@ export class SimpleIntegration {
             // CRITICAL: Add afterRender function that SkipTraversal may need
             afterRender: []
         };
+
+        // DEBUG frameState properties every 300 frames 
+        if (this.frameCount % 300 === 0) {
+            console.log('🔧 FRAMESTATE DEBUG:', {
+                hasCullingVolume: !!frameState.cullingVolume,
+                cameraPosition: `(${frameState.camera.position.x.toFixed(0)}, ${frameState.camera.position.y.toFixed(0)}, ${frameState.camera.position.z.toFixed(0)})`,
+                contextSize: `${frameState.context.drawingBufferWidth}x${frameState.context.drawingBufferHeight}`,
+                mode: frameState.mode,
+                frameNumber: frameState.frameNumber,
+                newFrame: frameState.newFrame,
+                hasTime: !!frameState.time,
+                hasPass: frameState.pass !== undefined,
+                hasTilesetPassState: !!frameState.tilesetPassState,
+                hasCreditDisplay: !!frameState.creditDisplay,
+                hasMapProjection: !!frameState.mapProjection,
+                verticalExaggeration: frameState.verticalExaggeration
+            });
+        }
         
         // DEBUG: Enhanced request and tile loading monitoring with deep scheduler analysis  
         if (Date.now() % 60000 < 16) { // Every 60 seconds (reduced from 15)
@@ -248,8 +462,8 @@ export class SimpleIntegration {
 
         try {
             
-            // DEBUG: Add BaseTraversal request decision logging  
-            this.addBaseTraversalRequestLogging();
+            // DEBUG: Minimal request logging only (no hooks)
+            // this.addBaseTraversalRequestLogging(); // DISABLED - hooks interfered with tile selection
             
             // PHASE 1: Comprehensive diagnostic logging - DISABLED (tiles working, too verbose)
             // Re-enable this if debugging is needed by changing false to true
@@ -346,6 +560,25 @@ export class SimpleIntegration {
             // 3. postPassesUpdate() - cleanup, request scheduling, cache management
             if (typeof (this.cesiumTileset as any).postPassesUpdate === 'function') {
                 (this.cesiumTileset as any).postPassesUpdate(frameState);
+            }
+            
+            // 4. Apply transforms to selected tiles after Cesium processing
+            this.applyTransformsToSelectedTiles();
+            
+            // DEBUG: Check if tileset configuration is preventing tile selection
+            if (this.frameCount % 300 === 0 && this.cesiumTileset._selectedTiles.length === 0) {
+                console.log('🔧 TILESET CONFIGURATION DEBUG:', {
+                    maximumScreenSpaceError: this.cesiumTileset.maximumScreenSpaceError,
+                    skipLevelOfDetail: this.cesiumTileset.skipLevelOfDetail,
+                    baseScreenSpaceError: this.cesiumTileset.baseScreenSpaceError,
+                    skipScreenSpaceErrorFactor: this.cesiumTileset.skipScreenSpaceErrorFactor,
+                    skipLevels: this.cesiumTileset.skipLevels,
+                    immediatelyLoadDesiredLevelOfDetail: this.cesiumTileset.immediatelyLoadDesiredLevelOfDetail,
+                    loadSiblings: this.cesiumTileset.loadSiblings,
+                    debugFreezeFrame: this.cesiumTileset.debugFreezeFrame,
+                    ready: this.cesiumTileset.ready,
+                    show: this.cesiumTileset.show
+                });
             }
             
             // PHASE 1: Post-update traversal analysis - DISABLED (tiles working, too verbose)
@@ -529,7 +762,17 @@ export class SimpleIntegration {
             // Quiet down the constant logging - only log if tiles are actually selected or every 10 seconds
             const selectedCount = this.cesiumTileset.selectedTiles?.length || 0;
             if (selectedCount > 0 || Date.now() % 10000 < 16) {
-                console.log(`🎯 Tiles: ${selectedCount} selected, ready: ${readyState}`);
+                // DEBUG: Comprehensive tile selection analysis
+                const stats = this.cesiumTileset.statistics;
+                const actualSelectedTiles = this.cesiumTileset.selectedTiles;
+                const numberOfTilesSelected = stats ? stats.numberOfTilesSelected : 'undefined';
+                
+                console.log(`🎯 TILE SELECTION DEBUG: {
+                    selectedCount: ${selectedCount},
+                    actualSelectedTiles_length: ${actualSelectedTiles ? actualSelectedTiles.length : 'undefined'},
+                    statistics_numberOfTilesSelected: ${numberOfTilesSelected},
+                    ready: ${readyState}
+                }`);
             }
             
             // Update frame tracking for next frame
@@ -784,62 +1027,6 @@ export class SimpleIntegration {
     /**
      * Create complete Cesium camera matching working commit 72dfb2e
      */
-    private createCesiumCamera(): any {
-        // Get Babylon camera position and direction
-        const babylonPos = this.camera.position;
-        const babylonDir = this.camera.getDirection(Vector3.Forward());
-        const babylonUp = this.camera.upVector || Vector3.Up();
-
-        // Transform to Cesium coordinates (Y-up to Z-up)
-        const position = new Cesium.Cartesian3(babylonPos.x, babylonPos.z, babylonPos.y);
-        const direction = new Cesium.Cartesian3(babylonDir.x, babylonDir.z, babylonDir.y);
-        const up = new Cesium.Cartesian3(babylonUp.x, babylonUp.z, babylonUp.y);
-        
-        // Normalize vectors
-        Cesium.Cartesian3.normalize(direction, direction);
-        Cesium.Cartesian3.normalize(up, up);
-        
-        const right = new Cesium.Cartesian3();
-        Cesium.Cartesian3.cross(direction, up, right);
-        Cesium.Cartesian3.normalize(right, right);
-
-        // Create frustum
-        const frustum = new Cesium.PerspectiveFrustum({
-            fov: this.camera.fov,
-            aspectRatio: this.engine.getRenderWidth() / this.engine.getRenderHeight(),
-            near: this.camera.minZ,
-            far: this.camera.maxZ
-        });
-
-        // CRITICAL: Trigger SSE denominator calculation like working commit 72dfb2e
-        // Access sseDenominator to ensure frustum is properly initialized
-        if ((frustum as any).sseDenominator) {
-            // Frustum properly initialized with SSE denominator
-        }
-
-        // Calculate cartographic position for geographic reference
-        const positionCartographic = Cesium.Cartographic.fromCartesian(position, Cesium.Ellipsoid.WGS84);
-
-        return {
-            // Basic vectors
-            position,
-            direction,
-            up,
-            right,
-            frustum,
-            // World coordinate versions
-            positionWC: position,
-            directionWC: direction,
-            upWC: up,
-            rightWC: right,
-            // CRITICAL: Camera movement detection properties for tile refinement
-            timeSinceMoved: 0.0,  // Just moved, trigger tile refinement
-            positionWCDeltaMagnitude: 1000.0,  // Significant movement detected
-            positionWCDeltaMagnitudeLastFrame: 0.0,  // Previous frame delta
-            // Additional properties from working commit
-            positionCartographic: positionCartographic
-        };
-    }
 
 
     // REMOVED: Manual dynamic SSE calculation - now handled by native prePassesUpdate()
@@ -898,29 +1085,65 @@ export class SimpleIntegration {
         // CESIUM EXACT PATTERN: Replace factory methods with our implementations
         // Following the exact same approach as Cesium's Cesium3DTileContentFactory.js
         
-        // Store originals for fallback
+        // Store originals for fallback and tracking
         const originalB3dm = Cesium3DTileContentFactory.b3dm;
         const originalGlb = Cesium3DTileContentFactory.glb;
+        const originalPnts = Cesium3DTileContentFactory.pnts;
+        const originalI3dm = Cesium3DTileContentFactory.i3dm;
+        const originalGltf = Cesium3DTileContentFactory.gltf;
+        
+        // Track ALL factory method calls to understand coverage
+        const factoryCallCounts = { b3dm: 0, glb: 0, pnts: 0, i3dm: 0, gltf: 0, other: 0 };
         
         // Replace B3DM factory method
         Cesium3DTileContentFactory.b3dm = function(tileset: any, tile: any, resource: any, arrayBuffer: ArrayBuffer, byteOffset: number) {
-            console.log('🏭 CESIUM B3DM FACTORY: Called with Babylon override');
+            factoryCallCounts.b3dm++;
+            console.log(`🏭 CESIUM B3DM FACTORY: Called with Babylon override (${factoryCallCounts.b3dm})`);
             return SimpleBabylonTileContent.fromB3dm(tileset, tile, resource, arrayBuffer, byteOffset, babylonScene);
         };
         
         // Replace GLB factory method  
         Cesium3DTileContentFactory.glb = function(tileset: any, tile: any, resource: any, arrayBuffer: ArrayBuffer, byteOffset: number) {
-            console.log('🏭 CESIUM GLB FACTORY: Called with Babylon override');
+            factoryCallCounts.glb++;
+            // Silent factory call counting (glb: ${factoryCallCounts.glb})
             
             // Extract GLB data from the offset
             const glbData = arrayBuffer.slice(byteOffset);
             return SimpleBabylonTileContent.fromGltf(tileset, tile, resource, glbData, babylonScene);
         };
         
-        const hooksApplied = 2; // B3DM + GLB
+        // Hook other factory methods for tracking (without replacing functionality)
+        Cesium3DTileContentFactory.pnts = function(tileset: any, tile: any, resource: any, arrayBuffer: ArrayBuffer, byteOffset: number) {
+            factoryCallCounts.pnts++;
+            console.log(`📍 CESIUM PNTS FACTORY: Called (${factoryCallCounts.pnts}) - using original`);
+            return originalPnts.call(this, tileset, tile, resource, arrayBuffer, byteOffset);
+        };
         
-        console.log(`✅ Babylon factory ready (${hooksApplied} methods hooked)`);
+        Cesium3DTileContentFactory.i3dm = function(tileset: any, tile: any, resource: any, arrayBuffer: ArrayBuffer, byteOffset: number) {
+            factoryCallCounts.i3dm++;
+            console.log(`🏗️ CESIUM I3DM FACTORY: Called (${factoryCallCounts.i3dm}) - using original`);
+            return originalI3dm.call(this, tileset, tile, resource, arrayBuffer, byteOffset);
+        };
+        
+        Cesium3DTileContentFactory.gltf = function(tileset: any, tile: any, resource: any, json: any) {
+            factoryCallCounts.gltf++;
+            console.log(`🎭 CESIUM GLTF FACTORY: Called (${factoryCallCounts.gltf}) - using original`);
+            return originalGltf.call(this, tileset, tile, resource, json);
+        };
+        
+        // Add periodic factory call summary
+        setInterval(() => {
+            const totalCalls = Object.values(factoryCallCounts).reduce((sum, count) => sum + count, 0);
+            if (totalCalls > 0) {
+                console.log(`📊 FACTORY CALL SUMMARY: Total=${totalCalls}`, factoryCallCounts);
+            }
+        }, 10000); // Every 10 seconds
+        
+        const hooksApplied = 5; // B3DM + GLB + PNTS + I3DM + GLTF tracking
+        
+        console.log(`✅ Babylon factory ready (${hooksApplied} methods hooked with tracking)`);
     }
+
 
     /**
      * DEBUGGING: Add tile content request promise monitoring
@@ -1013,70 +1236,8 @@ export class SimpleIntegration {
         if (!(this.cesiumTileset as any)._requestLoggingSetup) {
             (this.cesiumTileset as any)._requestLoggingSetup = true;
             
-            // Hook into Cesium3DTilesetBaseTraversal.selectTiles() if available
-            const BaseTraversal = (Cesium as any).Cesium3DTilesetBaseTraversal;
-            if (BaseTraversal && BaseTraversal.selectTiles) {
-                const originalSelectTiles = BaseTraversal.selectTiles;
-                BaseTraversal.selectTiles = function(tileset: any, frameState: any) {
-                    // Trust Cesium's logic completely - just call original
-                    const result = originalSelectTiles.call(this, tileset, frameState);
-                    
-                    // Minimal logging only every 10 seconds to check progress  
-                    const shouldLog = frameState.frameNumber % 300 === 0;
-                    if (shouldLog && tileset.root) {
-                        console.log('🎯 Tile Selection Status:', {
-                            selectedTiles: tileset.selectedTiles?.length || 0,
-                            visitedTiles: tileset.statistics?.visited || 0
-                        });
-                        
-                        // DEBUG: Why aren't tiles being selected despite being visited?
-                        const rootTile = tileset.root;
-                        if (rootTile && rootTile.children?.length > 0) {
-                            console.log('🔍 ROOT TILE DEBUG:', {
-                                hasChildren: rootTile.children.length,
-                                refine: rootTile.refine,
-                                contentAvailable: rootTile.contentAvailable,
-                                hasRenderableContent: rootTile.hasRenderableContent
-                            });
-                            
-                            // DETAILED HIERARCHY ANALYSIS: Check children and grandchildren
-                            console.log('🌳 DETAILED HIERARCHY ANALYSIS:');
-                            for (let i = 0; i < Math.min(2, rootTile.children.length); i++) {
-                                const child = rootTile.children[i];
-                                console.log(`📂 Child ${i} (depth 1):`, {
-                                    depth: child._depth,
-                                    contentAvailable: child.contentAvailable,
-                                    contentReady: child.contentReady,
-                                    hasRenderableContent: child.hasRenderableContent,
-                                    hasEmptyContent: child.hasEmptyContent,
-                                    contentType: child._content?.constructor?.name,
-                                    childCount: child.children?.length || 0,
-                                    isVisible: child._visible,
-                                    inRequestVolume: child._inRequestVolume
-                                });
-                                
-                                // Check grandchildren too - maybe our factory is creating content at wrong level
-                                if (child.children && child.children.length > 0) {
-                                    console.log(`  📁 Grandchildren of child ${i}:`);
-                                    for (let j = 0; j < Math.min(2, child.children.length); j++) {
-                                        const grandchild = child.children[j];
-                                        console.log(`    Grandchild ${j} (depth ${grandchild._depth}):`, {
-                                            contentAvailable: grandchild.contentAvailable,
-                                            hasRenderableContent: grandchild.hasRenderableContent,
-                                            contentType: grandchild._content?.constructor?.name,
-                                            isSimpleBabylonContent: grandchild._content instanceof SimpleBabylonTileContent,
-                                            contentReady: grandchild._content?.ready
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    
-                    return result;
-                };
-                console.log('✅ Hooked BaseTraversal.selectTiles() with reduced logging');
-            }
+            // REMOVED: BaseTraversal.selectTiles hook was interfering with tile selection
+            // Let Cesium's native tile selection logic run unimpeded
             
             // Hook into individual tile loading decision - Cesium3DTilesetTraversal.loadTile()
             // DISABLED: Too verbose now that tiles are working
@@ -1265,8 +1426,11 @@ export class SimpleIntegration {
             console.log('✅ Hooked executeEmptyTraversal()');
         }
         
-        // Look for BaseTraversal refinement decision code
-        console.log('🔍 Searching for BaseTraversal internal functions...');
+        // REMOVED: BaseTraversal.selectTiles hook was interfering with tile selection
+        // Let Cesium's native tile selection logic run unimpeded
+        console.log('🎯 TILE SELECTION: Using native Cesium algorithms without interference');
+        
+        // Look for other BaseTraversal internal functions
         Object.getOwnPropertyNames(Cesium).forEach(key => {
             if (key.toLowerCase().includes('traversal') || key.toLowerCase().includes('refine') || key.toLowerCase().includes('select')) {
                 const obj = (Cesium as any)[key];
@@ -1323,187 +1487,7 @@ export class SimpleIntegration {
         });
     }
     
-    // Credit tracking with table display
-    private creditData: {[key: string]: {source: string, url?: string}} = {};
-    private lastCreditTableUpdate: number = 0;
     
-    /**
-     * Clean credit display using console.table() - updates in place
-     */
-    private displayCredit(credit: any): void {
-        try {
-            
-            let creditText = '';
-            let creditUrl = '';
-            
-            // Parse different credit formats
-            if (typeof credit === 'string') {
-                creditText = credit;
-            } else if (credit && typeof credit === 'object') {
-                // ENHANCED: Handle Cesium Credit objects properly
-                
-                // Try standard properties first
-                creditText = credit.text || credit.title || credit.attribution || '';
-                creditUrl = credit.link || credit.url || credit.href || '';
-                
-                // Handle HTML content
-                if (!creditText && credit.html) {
-                    creditText = credit.html.replace(/<[^>]*>/g, '').trim();
-                }
-                
-                // Handle DOM elements (if credit has element property)
-                if (!creditText && credit.element) {
-                    creditText = credit.element.textContent || credit.element.innerText || '';
-                }
-                
-                // Handle Cesium private properties
-                if (!creditText && credit._text) {
-                    creditText = credit._text;
-                }
-                
-                // Handle nested credit structures
-                if (!creditText && credit.credit) {
-                    creditText = credit.credit.text || credit.credit.title || credit.credit._text || '';
-                    creditUrl = credit.credit.link || credit.credit.url || credit.credit.href || '';
-                }
-                
-                // Try common property names
-                if (!creditText) {
-                    const textProps = ['label', 'content', 'name', 'description', 'caption'];
-                    for (const prop of textProps) {
-                        if (credit[prop] && typeof credit[prop] === 'string') {
-                            creditText = credit[prop];
-                            break;
-                        }
-                    }
-                }
-                
-                // Extract URL from HTML
-                if (!creditUrl && credit.html) {
-                    const urlMatch = credit.html.match(/href=["']([^"']+)["']/);
-                    if (urlMatch) {
-                        creditUrl = urlMatch[1];
-                    }
-                }
-                
-                // Extract URL from _html and parse text too
-                if (credit._html) {
-                    const urlMatch = credit._html.match(/href=["']([^"']+)["']/);
-                    if (urlMatch && !creditUrl) {
-                        creditUrl = urlMatch[1];
-                    }
-                    
-                    // Extract text from HTML if we don't have text yet
-                    if (!creditText) {
-                        try {
-                            const tempDiv = document.createElement('div');
-                            tempDiv.innerHTML = credit._html;
-                            creditText = tempDiv.textContent || tempDiv.innerText || '';
-                            
-                            // If HTML parsing resulted in empty/whitespace, try alt text or URL domain
-                            if (!creditText || !creditText.trim()) {
-                                // Try to extract alt text from img tags
-                                const altMatch = credit._html.match(/alt=["']([^"']+)["']/);
-                                if (altMatch) {
-                                    creditText = altMatch[1];
-                                } else if (creditUrl) {
-                                    // Use domain from URL as fallback
-                                    try {
-                                        const domain = new URL(creditUrl).hostname;
-                                        creditText = domain.replace('www.', '');
-                                    } catch (e) {
-                                        creditText = creditUrl;
-                                    }
-                                }
-                            }
-                        } catch (e) {
-                            // Fallback to regex if DOM parsing fails
-                            creditText = credit._html.replace(/<[^>]*>/g, '').trim();
-                        }
-                    }
-                }
-                
-            }
-            
-            // Better fallback for objects
-            if (!creditText) {
-                if (typeof credit === 'object' && credit !== null) {
-                    // Try to create a meaningful representation
-                    try {
-                        creditText = JSON.stringify(credit);
-                        // If JSON is too long, truncate it
-                        if (creditText.length > 100) {
-                            creditText = creditText.substring(0, 97) + '...';
-                        }
-                    } catch (e) {
-                        creditText = Object.prototype.toString.call(credit);
-                    }
-                } else {
-                    creditText = String(credit);
-                }
-            }
-            
-            // Clean up and categorize credit
-            creditText = creditText.trim();
-            if (!creditText || creditText.length < 2) {
-                return; // Skip empty or too-short credits
-            }
-            
-            // Skip only truly problematic or unhelpful credits
-            if (creditText === '[object Object]' ||
-                creditText === '{}' ||
-                creditText === 'null' ||
-                creditText === 'undefined' ||
-                creditText === '') {
-                return; // Skip only truly empty/broken credit representations
-            }
-            
-            // Create meaningful key for the table
-            let creditKey = creditText;
-            if (creditText.includes('Google')) {
-                creditKey = 'Google 3D Tiles';
-                creditText = '© Google'; // Clean up Google credits
-            } else if (creditText.includes('Cesium')) {
-                creditKey = 'Cesium Platform';
-                if (creditText.includes('Upgrade') || creditText.includes('commercial')) {
-                    creditKey = 'Cesium Licensing';
-                }
-            } else if (creditText.length > 30) {
-                creditKey = creditText.substring(0, 27) + '...';
-            }
-            
-            // Add to credit table data
-            this.creditData[creditKey] = {
-                source: creditText,
-                ...(creditUrl && { url: creditUrl })
-            };
-            
-            // Update table periodically (every 10 seconds) to avoid spam
-            const now = Date.now();
-            const timeSinceUpdate = now - this.lastCreditTableUpdate;
-            
-            if (timeSinceUpdate > 10000) {
-                this.lastCreditTableUpdate = now;
-                this.updateCreditTable();
-            }
-            
-        } catch (error) {
-            // Silent fallback - don't spam errors
-            console.debug('Credit parsing error:', error);
-        }
-    }
-    
-    /**
-     * Update the credit table display
-     */
-    private updateCreditTable(): void {
-        const creditKeys = Object.keys(this.creditData);
-        
-        if (creditKeys.length > 0) {
-            console.log('📋 CESIUM DATA ATTRIBUTION:');
-            console.table(this.creditData);
-        }
-    }
     
     /**
      * Monitor tile selection for parent hiding issues
@@ -1573,5 +1557,406 @@ export class SimpleIntegration {
         if (this.cesiumTileset && !this.cesiumTileset.isDestroyed()) {
             this.cesiumTileset.destroy();
         }
+    }
+
+    /**
+     * Apply transforms to selected tiles' meshes during render loop
+     * This replaces the early transform application in SimpleBabylonTileContent
+     */
+    private applyTransformsToSelectedTiles(): void {
+        if (!this.cesiumTileset || !this.cesiumTileset._selectedTiles) return;
+
+        const selectedTiles = this.cesiumTileset._selectedTiles;
+        
+        // Apply transforms only to newly selected tiles to avoid redundant work
+        selectedTiles.forEach((tile: any) => {
+            if (tile._content && 
+                tile._content.constructor.name === 'SimpleBabylonTileContent' &&
+                typeof tile._content.getBabylonMeshes === 'function' &&
+                typeof tile._content.getStoredTransform === 'function') {
+                
+                const meshes = tile._content.getBabylonMeshes();
+                const cesiumTransform = tile._content.getStoredTransform() || tile.computedTransform;
+                
+                if (meshes.length > 0 && cesiumTransform && !tile._babylonTransformApplied) {
+                    this.applyTransformToMeshes(meshes, cesiumTransform, tile);
+                    tile._babylonTransformApplied = true;
+                }
+            }
+        });
+    }
+
+    /**
+     * Apply Cesium transform matrix to Babylon meshes
+     */
+    private applyTransformToMeshes(meshes: any[], cesiumTransform: any, tile: any): void {
+        try {
+            // Convert Cesium's Matrix4 to Babylon's Matrix
+            // Cesium uses column-major matrices, Babylon uses row-major
+            const cesiumArray = cesiumTransform;
+            
+            // Convert Cesium column-major Matrix4 to Babylon row-major Matrix (transpose)
+            const babylonMatrix = Matrix.FromArray([
+                cesiumArray[0], cesiumArray[4], cesiumArray[8],  cesiumArray[12],
+                cesiumArray[1], cesiumArray[5], cesiumArray[9],  cesiumArray[13], 
+                cesiumArray[2], cesiumArray[6], cesiumArray[10], cesiumArray[14],
+                cesiumArray[3], cesiumArray[7], cesiumArray[11], cesiumArray[15]
+            ]);
+
+            // Apply the transform to all meshes
+            meshes.forEach((mesh, index) => {
+                if (mesh && mesh.setPreTransformMatrix) {
+                    mesh.setPreTransformMatrix(babylonMatrix);
+                } else if (mesh) {
+                    // Fallback: directly set the world matrix
+                    mesh.setAbsolutePosition(Vector3.Zero());
+                    mesh.freezeWorldMatrix(babylonMatrix);
+                }
+            });
+
+            // Silent transform application (depth=${tile._depth}, meshes=${meshes.length})
+
+        } catch (error) {
+            console.error('❌ Failed to apply transform in render loop:', error);
+        }
+    }
+
+    /**
+     * Visualize Cesium frustum in Babylon coordinate space
+     */
+    private frustumVisualization: any = null;
+    
+    private visualizeCesiumFrustum(cesiumCamera: any, frustum: any): void {
+        // Only update visualization every 120 frames to reduce spam
+        if (this.frameCount % 120 !== 0) return;
+        
+        try {
+            // Remove old visualization
+            if (this.frustumVisualization) {
+                this.frustumVisualization.dispose();
+                this.frustumVisualization = null;
+            }
+            
+            const scene = this.camera.getScene() as Scene;
+            if (!scene) {
+                console.warn('⚠️ No scene available for frustum visualization');
+                return;
+            }
+            
+            // Get frustum corners in Cesium ECEF coordinates
+            const corners = this.getFrustumCorners(cesiumCamera, frustum);
+            
+            // Transform corners from Cesium ECEF to Babylon coordinates (Y↔Z swap)
+            const babylonCorners = corners.map(corner => ({
+                x: corner.x,
+                y: corner.z, // Z → Y
+                z: corner.y  // Y → Z
+            }));
+            
+            // Create frustum visualization parent
+            this.frustumVisualization = MeshBuilder.CreateBox("frustumViz", {size: 0.1}, scene);
+            this.frustumVisualization.setEnabled(false); // Just a parent node
+            
+            // Create material for frustum lines with improved visibility
+            const frustumMaterial = new StandardMaterial("frustumMaterial", scene);
+            frustumMaterial.emissiveColor = new Color3(1, 0, 1); // Magenta
+            frustumMaterial.disableLighting = true;
+            frustumMaterial.backFaceCulling = false;
+            
+            // Draw frustum edges
+            this.drawFrustumLines(babylonCorners, frustumMaterial, scene);
+            
+            // Create direction vector visualization
+            const directionLength = 10000; // 10km line
+            const directionEnd = {
+                x: babylonCorners[0].x + cesiumCamera.direction.x * directionLength,
+                y: babylonCorners[0].y + cesiumCamera.direction.z * directionLength, // Y↔Z
+                z: babylonCorners[0].z + cesiumCamera.direction.y * directionLength  // Y↔Z
+            };
+            
+            const directionLine = MeshBuilder.CreateLines("directionVector", {
+                points: [
+                    new Vector3(babylonCorners[0].x, babylonCorners[0].y, babylonCorners[0].z),
+                    new Vector3(directionEnd.x, directionEnd.y, directionEnd.z)
+                ]
+            }, scene);
+            
+            const directionMaterial = new StandardMaterial("directionMaterial", scene);
+            directionMaterial.emissiveColor = new Color3(0, 1, 1); // Cyan for direction
+            directionMaterial.disableLighting = true;
+            directionLine.material = directionMaterial;
+            directionLine.parent = this.frustumVisualization;
+            
+            console.log('🎯 FRUSTUM VIZ:', {
+                position: `(${cesiumCamera.position.x.toFixed(0)}, ${cesiumCamera.position.y.toFixed(0)}, ${cesiumCamera.position.z.toFixed(0)})`,
+                direction: `(${cesiumCamera.direction.x.toFixed(3)}, ${cesiumCamera.direction.y.toFixed(3)}, ${cesiumCamera.direction.z.toFixed(3)})`,
+                created: !!this.frustumVisualization,
+                childMeshes: this.frustumVisualization ? this.frustumVisualization.getChildMeshes().length : 0,
+                babylonSceneMeshes: scene.meshes.filter(m => m.name.includes('frustum')).length
+            });
+            
+        } catch (error) {
+            console.error('❌ Failed to create frustum visualization:', error);
+        }
+    }
+    
+    /**
+     * Calculate frustum corner points in Cesium ECEF coordinates
+     */
+    private getFrustumCorners(cesiumCamera: any, frustum: any): any[] {
+        const position = cesiumCamera.position;
+        const direction = cesiumCamera.direction;
+        const up = cesiumCamera.up;
+        const right = cesiumCamera.right;
+        
+        // Calculate frustum dimensions at near and far planes
+        const nearHeight = 2 * Math.tan(frustum.fov / 2) * frustum.near;
+        const nearWidth = nearHeight * frustum.aspectRatio;
+        const farHeight = 2 * Math.tan(frustum.fov / 2) * frustum.far;
+        const farWidth = farHeight * frustum.aspectRatio;
+        
+        // Near plane center
+        const nearCenter = {
+            x: position.x + direction.x * frustum.near,
+            y: position.y + direction.y * frustum.near,
+            z: position.z + direction.z * frustum.near
+        };
+        
+        // Far plane center
+        const farCenter = {
+            x: position.x + direction.x * frustum.far,
+            y: position.y + direction.y * frustum.far,
+            z: position.z + direction.z * frustum.far
+        };
+        
+        // Calculate corner offsets
+        const nearHalfWidth = nearWidth / 2;
+        const nearHalfHeight = nearHeight / 2;
+        const farHalfWidth = farWidth / 2;
+        const farHalfHeight = farHeight / 2;
+        
+        // Return frustum corners (camera position + 4 near corners + 4 far corners)
+        return [
+            position, // Camera position
+            // Near plane corners
+            {
+                x: nearCenter.x - right.x * nearHalfWidth - up.x * nearHalfHeight,
+                y: nearCenter.y - right.y * nearHalfWidth - up.y * nearHalfHeight,
+                z: nearCenter.z - right.z * nearHalfWidth - up.z * nearHalfHeight
+            },
+            {
+                x: nearCenter.x + right.x * nearHalfWidth - up.x * nearHalfHeight,
+                y: nearCenter.y + right.y * nearHalfWidth - up.y * nearHalfHeight,
+                z: nearCenter.z + right.z * nearHalfWidth - up.z * nearHalfHeight
+            },
+            {
+                x: nearCenter.x + right.x * nearHalfWidth + up.x * nearHalfHeight,
+                y: nearCenter.y + right.y * nearHalfWidth + up.y * nearHalfHeight,
+                z: nearCenter.z + right.z * nearHalfWidth + up.z * nearHalfHeight
+            },
+            {
+                x: nearCenter.x - right.x * nearHalfWidth + up.x * nearHalfHeight,
+                y: nearCenter.y - right.y * nearHalfWidth + up.y * nearHalfHeight,
+                z: nearCenter.z - right.z * nearHalfWidth + up.z * nearHalfHeight
+            },
+            // Far plane corners
+            {
+                x: farCenter.x - right.x * farHalfWidth - up.x * farHalfHeight,
+                y: farCenter.y - right.y * farHalfWidth - up.y * farHalfHeight,
+                z: farCenter.z - right.z * farHalfWidth - up.z * farHalfHeight
+            },
+            {
+                x: farCenter.x + right.x * farHalfWidth - up.x * farHalfHeight,
+                y: farCenter.y + right.y * farHalfWidth - up.y * farHalfHeight,
+                z: farCenter.z + right.z * farHalfWidth - up.z * farHalfHeight
+            },
+            {
+                x: farCenter.x + right.x * farHalfWidth + up.x * farHalfHeight,
+                y: farCenter.y + right.y * farHalfWidth + up.y * farHalfHeight,
+                z: farCenter.z + right.z * farHalfWidth + up.z * farHalfHeight
+            },
+            {
+                x: farCenter.x - right.x * farHalfWidth + up.x * farHalfHeight,
+                y: farCenter.y - right.y * farHalfWidth + up.y * farHalfHeight,
+                z: farCenter.z - right.z * farHalfWidth + up.z * farHalfHeight
+            }
+        ];
+    }
+    
+    /**
+     * Draw frustum wireframe lines
+     */
+    private drawFrustumLines(corners: any[], material: any, scene: Scene): void {
+        try {
+        
+        // Near plane edges (corners 1-4)
+        for (let i = 1; i <= 4; i++) {
+            const next = i === 4 ? 1 : i + 1;
+            const line = MeshBuilder.CreateLines(`nearEdge${i}`, {
+                points: [
+                    new Vector3(corners[i].x, corners[i].y, corners[i].z),
+                    new Vector3(corners[next].x, corners[next].y, corners[next].z)
+                ]
+            }, scene);
+            line.material = material;
+            line.parent = this.frustumVisualization;
+        }
+        
+        // Far plane edges (corners 5-8)
+        for (let i = 5; i <= 8; i++) {
+            const next = i === 8 ? 5 : i + 1;
+            const line = MeshBuilder.CreateLines(`farEdge${i}`, {
+                points: [
+                    new Vector3(corners[i].x, corners[i].y, corners[i].z),
+                    new Vector3(corners[next].x, corners[next].y, corners[next].z)
+                ]
+            }, scene);
+            line.material = material;
+            line.parent = this.frustumVisualization;
+        }
+        
+        // Connecting edges from near to far plane
+        for (let i = 1; i <= 4; i++) {
+            const line = MeshBuilder.CreateLines(`connectEdge${i}`, {
+                points: [
+                    new Vector3(corners[i].x, corners[i].y, corners[i].z),
+                    new Vector3(corners[i + 4].x, corners[i + 4].y, corners[i + 4].z)
+                ]
+            }, scene);
+            line.material = material;
+            line.parent = this.frustumVisualization;
+        }
+        
+        // Camera position to near plane corners
+        for (let i = 1; i <= 4; i++) {
+            const line = MeshBuilder.CreateLines(`cameraLine${i}`, {
+                points: [
+                    new Vector3(corners[0].x, corners[0].y, corners[0].z),
+                    new Vector3(corners[i].x, corners[i].y, corners[i].z)
+                ]
+            }, scene);
+            line.material = material;
+            line.parent = this.frustumVisualization;
+        }
+        } catch (error) {
+            console.error('❌ Failed to draw frustum lines:', error);
+        }
+    }
+
+    /**
+     * Log geographic bounds mismatch between camera position and loaded tiles
+     */
+    private logTileGeographicMismatch(cameraLat: number, cameraLon: number): void {
+        if (!this.cesiumTileset) {
+            console.log('❌ No cesiumTileset for geographic analysis');
+            return;
+        }
+        
+        console.log('🌍 GEOGRAPHIC BOUNDS ANALYSIS:');
+        console.log(`   Camera Position: ${cameraLat.toFixed(4)}°, ${cameraLon.toFixed(4)}° (NYC expected)`);
+        
+        // COORDINATE DEBUG: Log camera ECEF for comparison with tile ECEF
+        const cameraECEF = this.createCesiumCamera().position;
+        console.log(`   Camera ECEF: (${cameraECEF.x.toFixed(0)}, ${cameraECEF.y.toFixed(0)}, ${cameraECEF.z.toFixed(0)})`);
+        console.log(`   Expected NYC ECEF: (1333425, -4663874, 4142833) - should be close to camera`);
+        
+        // Get all loaded/ready tiles and their geographic bounds
+        const allTiles = this.getAllTilesWithContent();
+        const selectedTiles = this.cesiumTileset.selectedTiles || [];
+        const nycBounds = { latMin: 40.0, latMax: 41.0, lonMin: -75.0, lonMax: -73.0 }; // Approximate NYC area
+        
+        console.log(`   Total tiles with content: ${allTiles.length}`);
+        console.log(`   Selected tiles: ${selectedTiles.length}`);
+        
+        if (allTiles.length === 0) {
+            console.log('   ⚠️ No tiles loaded yet - skipping geographic analysis');
+            return;
+        }
+        
+        let nycAreaTiles = 0;
+        let wrongRegionTiles = 0;
+        const regions: any = {};
+        
+        allTiles.forEach((tile, i) => {
+            if (tile.boundingSphere && i < 15) { // Log first 15 tiles for detailed analysis
+                const center = tile.boundingSphere.center;
+                const cartographic = Cesium.Cartographic.fromCartesian(center);
+                if (cartographic) {
+                    const lat = Cesium.Math.toDegrees(cartographic.latitude);
+                    const lon = Cesium.Math.toDegrees(cartographic.longitude);
+                    const radius = tile.boundingSphere.radius;
+                    
+                    const isNYCArea = lat >= nycBounds.latMin && lat <= nycBounds.latMax && 
+                                     lon >= nycBounds.lonMin && lon <= nycBounds.lonMax;
+                    
+                    if (isNYCArea) nycAreaTiles++;
+                    else wrongRegionTiles++;
+                    
+                    // Track regions
+                    const region = `${Math.round(lat/45)*45}°/${Math.round(lon/45)*45}°`;
+                    regions[region] = (regions[region] || 0) + 1;
+                    
+                    // COORDINATE DEBUG: Log both ECEF and Geographic for comparison
+                    const cameraECEF = this.createCesiumCamera().position;
+                    const distanceKm = Cesium.Cartesian3.distance(center, cameraECEF) / 1000;
+                    console.log(`     Tile ${i}: ${lat.toFixed(1)}°, ${lon.toFixed(1)}° (r=${(radius/1000).toFixed(0)}km) ${isNYCArea ? '✅NYC' : '❌WRONG'}`);
+                    console.log(`       ECEF: (${center.x.toFixed(0)}, ${center.y.toFixed(0)}, ${center.z.toFixed(0)}) dist=${distanceKm.toFixed(0)}km`);
+                }
+            }
+        });
+        
+        console.log(`   NYC Area Tiles: ${nycAreaTiles} / ${allTiles.length} (${(100*nycAreaTiles/Math.max(allTiles.length,1)).toFixed(1)}%)`);
+        console.log(`   Wrong Region Tiles: ${wrongRegionTiles} / ${allTiles.length} (${(100*wrongRegionTiles/Math.max(allTiles.length,1)).toFixed(1)}%)`);
+        console.log(`   Geographic Distribution:`, Object.keys(regions).map(r => `${r}:${regions[r]}`).join(', '));
+        
+        if (wrongRegionTiles > nycAreaTiles) {
+            console.log('   🚨 CRITICAL: More wrong-region tiles than NYC tiles! Tile selection algorithm issue.');
+        }
+        
+        // DEBUG: Check selected vs loaded tiles
+        console.log(`   SELECTION ISSUE: ${selectedTiles.length} selected vs ${allTiles.length} loaded`);
+        if (selectedTiles.length === 0 && allTiles.length > 0) {
+            console.log('   🔍 HYPOTHESIS: Tiles loaded but none selected - coordinate or culling issue');
+        }
+        
+        // COORDINATE VERIFICATION: Convert expected NYC ECEF back to lat/lon
+        const expectedNYC_ECEF = new Cesium.Cartesian3(1333425, -4663874, 4142833);
+        const expectedCartographic = Cesium.Cartographic.fromCartesian(expectedNYC_ECEF);
+        if (expectedCartographic) {
+            const expectedLat = Cesium.Math.toDegrees(expectedCartographic.latitude);
+            const expectedLon = Cesium.Math.toDegrees(expectedCartographic.longitude);
+            console.log(`   Reverse check NYC ECEF → ${expectedLat.toFixed(4)}°, ${expectedLon.toFixed(4)}° (should be 40.69°, -74.04°)`);
+        }
+    }
+    
+    /**
+     * Get all tiles that have loaded content (for geographic analysis)
+     */
+    private getAllTilesWithContent(): any[] {
+        if (!this.cesiumTileset) return [];
+        
+        const tilesWithContent: any[] = [];
+        let totalTilesChecked = 0;
+        
+        const collectTiles = (tile: any) => {
+            totalTilesChecked++;
+            if (tile._content && tile._content.ready) {
+                tilesWithContent.push(tile);
+            }
+            if (tile.children) {
+                tile.children.forEach(collectTiles);
+            }
+        };
+        
+        if (this.cesiumTileset.root) {
+            collectTiles(this.cesiumTileset.root);
+        }
+        
+        // Debug tile collection
+        if (this.frameCount % 180 === 0) {
+            console.log(`🔍 TILE COLLECTION: Found ${tilesWithContent.length} ready tiles out of ${totalTilesChecked} total checked`);
+        }
+        
+        return tilesWithContent;
     }
 }

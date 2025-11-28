@@ -31,23 +31,24 @@ window.addEventListener('DOMContentLoaded', async () => {
     
     // Canvas found, creating Babylon engine
     
-    const engine = new Engine(canvas, true);
+    const engine = new Engine(canvas, true, {
+        useLargeWorldRendering: true
+    });
 
     function createScene(): Scene {
         const scene = new Scene(engine);
         
-        // COORDINATE SYSTEM: Try LEFT-HANDED to see if this fixes East/West flip
+        // TESTING: Use Babylon's default LEFT-HANDED system first, then handle handedness conversion
         scene.useRightHandedSystem = false;
-        console.log(`🧭 COORDINATE SYSTEM: Babylon.js scene configured for LEFT-HANDED coordinates (testing East/West fix)`);
+        console.log(`🧭 COORDINATE SYSTEM: Babylon.js scene using DEFAULT LEFT-HANDED coordinates`);
+        console.log(`🔍 HANDEDNESS VERIFICATION: scene.useRightHandedSystem = ${scene.useRightHandedSystem}`);
         
         // Setup FreeCamera for 3D world viewing (Earth-scale coordinates)
         const camera = new FreeCamera("camera", Vector3.Zero(), scene);
         camera.attachControl(canvas, true);
         
-        // CRITICAL: Match Cesium's exact FOV and settings for proper tile culling
+        // CRITICAL: Match Cesium's exact FOV for proper tile culling
         camera.fov = Math.PI / 3; // 60 degrees - MUST match Cesium's PerspectiveFrustum.fov
-        camera.minZ = 1.0;        // MUST match Cesium's PerspectiveFrustum.near
-        camera.maxZ = 500000000;  // MUST match Cesium's PerspectiveFrustum.far
         
         // Enable WASDQE controls
         camera.keysUp = [87]; // W
@@ -57,9 +58,9 @@ window.addEventListener('DOMContentLoaded', async () => {
         camera.keysUpward = [81]; // Q
         camera.keysDownward = [69]; // E
         
-        // CRITICAL: Set camera clipping planes for massive distances
-        camera.minZ = 1000;           // Near clipping plane - 1km
-        camera.maxZ = 200000000;      // Far clipping plane - 200,000km (much larger!)
+        // CRITICAL: Near-Cesium frustum parameters for Google Tilesets
+        camera.minZ = 1.0;            // Near: 1m (with logarithmic depth buffer)
+        camera.maxZ = 500000000;      // Far: 500,000km (Cesium's exact default)
         
         // Make camera movement faster for large scale
         // Mouse wheel sensitivity for zooming
@@ -119,7 +120,16 @@ window.addEventListener('DOMContentLoaded', async () => {
             const libertyLat = 40.6892 * Math.PI / 180;
             const libertyLon = -74.0445 * Math.PI / 180;
             const surfaceAltitude = 0; // Sea level
-            const cameraAltitude = 10000; // 10km above surface - good viewing distance for NYC
+            const cameraAltitude = 10000; // 10km above surface - test original working coordinates
+            
+            console.log('📐 COORDINATE SETUP:', {
+                latDegrees: 40.6892,
+                lonDegrees: -74.0445,
+                latRadians: libertyLat,
+                lonRadians: libertyLon,
+                surfaceAltitude,
+                cameraAltitude
+            });
             
             // Use Cesium's proper ellipsoid calculations
             const { Cartesian3: CesiumCartesian3, Ellipsoid } = await import('cesium');
@@ -130,11 +140,26 @@ window.addEventListener('DOMContentLoaded', async () => {
             const nycSurfaceCesium = CesiumCartesian3.fromRadians(libertyLon, libertyLat, surfaceAltitude);
             const cameraPositionCesium = CesiumCartesian3.fromRadians(libertyLon, libertyLat, cameraAltitude);
             
-            // COORDINATE TRANSFORMATION: Cesium ECEF (Z-up) → Babylon (Y-up, right-handed)
-            // Transformation: (cesium_x, cesium_y, cesium_z) → (babylon_x, babylon_y, babylon_z)
-            //                 (X,        Y,        Z)        → (X,        Z,        Y)
+            console.log('🗽 NYC COORDINATES DEBUG:');
+            console.log(`   Lat/Lon: ${40.6892}°, ${-74.0445}° (${libertyLat.toFixed(6)}, ${libertyLon.toFixed(6)} radians)`);
+            console.log(`   Original Cesium ECEF camera: (${cameraPositionCesium.x.toFixed(0)}, ${cameraPositionCesium.y.toFixed(0)}, ${cameraPositionCesium.z.toFixed(0)})`);
+            console.log(`   → Babylon camera position: (${cameraPositionCesium.x.toFixed(0)}, ${cameraPositionCesium.z.toFixed(0)}, ${cameraPositionCesium.y.toFixed(0)})`);
+            console.log(`   EXPECTATION: simpleIntegration should send back the original ECEF coordinates`);
+            
+            // Store for reference
+            (window as any).originalNYCEcef = cameraPositionCesium;
+            
+            // WORKING CONFIG: Left-handed Babylon with Y↔Z transformation (from working commit 1012957)
+            // Cesium ECEF (Z-up) → Babylon (Y-up): (X, Y, Z) → (X, Z, Y)
             const nycSurface = new Vector3(nycSurfaceCesium.x, nycSurfaceCesium.z, nycSurfaceCesium.y);
             const cameraPosition = new Vector3(cameraPositionCesium.x, cameraPositionCesium.z, cameraPositionCesium.y);
+            
+            console.log('📍 BABYLON CAMERA POSITIONING:', {
+                nycSurfaceBabylon: { x: nycSurface.x, y: nycSurface.y, z: nycSurface.z },
+                cameraPositionBabylon: { x: cameraPosition.x, y: cameraPosition.y, z: cameraPosition.z },
+                distanceFromSurface: Vector3.Distance(cameraPosition, nycSurface),
+                expectedDistance: cameraAltitude
+            });
             
             // Store NYC surface coordinates for spacebar functionality
             const nycSurfaceForFrameState = nycSurfaceCesium;
@@ -142,6 +167,12 @@ window.addEventListener('DOMContentLoaded', async () => {
             // Set camera position and look down at NYC surface
             camera.position = cameraPosition;
             camera.setTarget(nycSurface);
+            
+            console.log('🎯 CAMERA SETUP COMPLETE:', {
+                actualCameraPosition: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+                cameraTarget: { x: nycSurface.x, y: nycSurface.y, z: nycSurface.z },
+                cameraDirection: camera.getDirection(Vector3.Forward())
+            });
             
             // Add keyboard controls for camera speed (1-9 keys)
             window.addEventListener('keydown', (event) => {

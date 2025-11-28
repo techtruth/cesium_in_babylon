@@ -1,6 +1,7 @@
-import { Scene as BabylonScene } from '@babylonjs/core';
+import { Scene as BabylonScene, Matrix, Vector3 } from '@babylonjs/core';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
 import '@babylonjs/loaders/glTF';
+import * as Cesium from 'cesium';
 
 /**
  * SimpleBabylonTileContent - Following Cesium's Model3DTileContent pattern EXACTLY
@@ -37,11 +38,10 @@ export class SimpleBabylonTileContent {
             const blob = new Blob([gltfData], { type: 'model/gltf-binary' });
             const objectURL = URL.createObjectURL(blob);
 
-            console.log('🔄 Loading glTF content:', {
-                tileDepth: this._tile._depth,
-                dataSize: gltfData.length,
-                mimeType: 'model/gltf-binary'
-            });
+            // Silent loading for depths > 2 to reduce spam
+            if (this._tile._depth <= 2) {
+                console.log(`🔄 Loading tile: depth=${this._tile._depth}, size=${(gltfData.length/1000).toFixed(0)}kb`);
+            }
 
             // Load with Babylon's SceneLoader using proper glTF plugin
             const result = await SceneLoader.ImportMeshAsync(
@@ -52,15 +52,37 @@ export class SimpleBabylonTileContent {
                 undefined, // onProgress
                 '.glb' // file extension hint for proper plugin selection
             );
+            
+            // Enable logarithmic depth buffer on all tile materials for Earth-scale precision
+            result.meshes.forEach(mesh => {
+                if (mesh.material) {
+                    mesh.material.useLogarithmicDepth = true;
+                }
+            });
 
             // Store meshes for cleanup
             this._meshes = result.meshes;
 
-            console.log('✅ BABYLON CONTENT LOADED:', {
-                tileDepth: this._tile._depth,
-                meshCount: result.meshes.length,
-                hasGeometry: result.meshes.length > 0
-            });
+            // Store Cesium's transform for later application during rendering
+            // DON'T apply here - let Cesium handle tile positioning through its normal pipeline
+            this.storeCesiumTransform();
+
+            // Debug tile bounding info for geographic validation
+            const boundingSphere = this._tile.boundingSphere;
+            let boundingInfo = 'No bounding sphere';
+            if (boundingSphere) {
+                const centerCartographic = Cesium.Cartographic.fromCartesian(boundingSphere.center);
+                if (centerCartographic) {
+                    const centerLat = Cesium.Math.toDegrees(centerCartographic.latitude);
+                    const centerLon = Cesium.Math.toDegrees(centerCartographic.longitude);
+                    boundingInfo = `Center: ${centerLat.toFixed(4)}°, ${centerLon.toFixed(4)}°, Radius: ${boundingSphere.radius.toFixed(0)}m`;
+                }
+            }
+            
+            // Only log tile bounds for analysis (key geographic data)
+            if (this._tile._depth <= 3) {
+                console.log(`✅ Tile loaded: ${boundingInfo} | Expected: NYC ~40.69°, -74.04°`);
+            }
 
             // Mark as ready - this is what matters for Cesium
             this._ready = true;
@@ -71,6 +93,27 @@ export class SimpleBabylonTileContent {
         } catch (error) {
             console.error('❌ Failed to load tile content:', error);
             this._ready = true; // Mark ready even on failure so tile system continues
+        }
+    }
+
+    /**
+     * Store Cesium's transform matrix for later application during rendering
+     * Let Cesium handle tile positioning through its normal pipeline
+     */
+    private storeCesiumTransform(): void {
+        // Get the computed transform from the tile 
+        const cesiumTransform = this._tile.computedTransform;
+        if (!cesiumTransform) {
+            console.warn('⚠️ No computedTransform found on tile');
+            return;
+        }
+
+        // Store transform on the tile content for later access during rendering
+        (this as any)._storedTransform = cesiumTransform;
+
+        // Only log first tile transform to reduce spam
+        if (this._tile._depth <= 2) {
+            console.log(`💾 Transform stored: depth=${this._tile._depth}`);
         }
     }
 
@@ -113,8 +156,18 @@ export class SimpleBabylonTileContent {
     }
 
     get ready(): boolean {
+        // Reduced ready check logging - only first few times per tile
+        if (this._ready && this._tile && this._tile._depth <= 2) {
+            const now = Date.now();
+            if (!this._lastReadyLogTime || (now - this._lastReadyLogTime) > 5000) {
+                console.log(`🔄 CONTENT READY: depth=${this._tile._depth}, state=${this._tile._contentState}`);
+                this._lastReadyLogTime = now;
+            }
+        }
         return this._ready;
     }
+
+    private _lastReadyLogTime?: number;
 
     get tileset(): any {
         return this._tileset;
@@ -134,6 +187,24 @@ export class SimpleBabylonTileContent {
 
     set metadata(_value: any) {
         // No metadata support needed
+    }
+
+    // ========================================
+    // BABYLON INTEGRATION METHODS
+    // ========================================
+
+    /**
+     * Get loaded Babylon meshes for external transform application
+     */
+    getBabylonMeshes(): any[] {
+        return this._meshes || [];
+    }
+
+    /**
+     * Get stored Cesium transform matrix
+     */
+    getStoredTransform(): any {
+        return (this as any)._storedTransform;
     }
 
     get batchTable(): undefined {
@@ -165,9 +236,31 @@ export class SimpleBabylonTileContent {
         // Style application could be added here if needed
     }
 
-    update(_tileset: any, _frameState: any): void {
-        // Update logic if needed (transforms, animations, etc.)
-        // For basic rendering, nothing needed here
+    update(tileset: any, frameState: any): void {
+        // Follow Cesium's Model3DTileContent.update() pattern exactly
+        // The key is applying the computed transform on every frame update
+        
+        if (!this._ready || !this._meshes || this._meshes.length === 0) {
+            return;
+        }
+
+        // Check if the tile's computed transform has changed
+        // This can happen as the camera moves and tiles are updated
+        const currentTransform = this._tile.computedTransform;
+        if (currentTransform) {
+            // For now, we apply transforms once during loading
+            // But we could add dynamic transform updates here if needed
+            
+            // Example of what Cesium does:
+            // model.modelMatrix = tile.computedTransform;
+            // model.update(frameState);
+        }
+        
+        // Future enhancements could include:
+        // - Dynamic LOD updates
+        // - Animation updates  
+        // - Clipping plane updates
+        // - Style updates
     }
 
     pick(_ray: any, _frameState: any, _result?: any): undefined {
@@ -262,6 +355,7 @@ export class SimpleBabylonTileContent {
             content._ready = true; // Mark ready to avoid blocking tile system
         }
         
+        // Silent factory completion to reduce spam
         return content;
     }
 
@@ -293,6 +387,7 @@ export class SimpleBabylonTileContent {
             content._ready = true; // Mark ready to avoid blocking tile system
         }
         
+        // Silent factory completion to reduce spam
         return content;
     }
 }
