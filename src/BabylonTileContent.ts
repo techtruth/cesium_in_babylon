@@ -20,6 +20,8 @@ export class BabylonTileContent {
     private static debugLogCount: number = 0;
     private static showLogCount: number = 0;
     private static lastHideLogTime: number = 0;
+    private static selectedTilesFixLogged: boolean = false;
+    private static firstSelectionLogged: boolean = false;
     private _babylonScene: BabylonScene;
     // Removed BabylonTilesOrchestrator - direct content creation like Cesium
     private _tile: any; // The Cesium3DTile that owns this content
@@ -36,13 +38,6 @@ export class BabylonTileContent {
         arrayBuffer: ArrayBuffer,
         tileset?: any  // MinimalTileset reference for content registration
     ) {
-        console.log('🏭 BABYLON FACTORY: Creating content for', tile._contentResource?.url?.split('/').pop()?.split('?')[0] || 'unknown', {
-            tileId: tile.id || 'unknown',
-            depth: tile._depth || 'unknown', 
-            initialContentState: tile._contentState,
-            initialHasRenderableContent: tile.hasRenderableContent,
-            arrayBufferSize: arrayBuffer.byteLength
-        });
         
         this._babylonScene = babylonScene;
         // Direct initialization - no orchestrator needed
@@ -126,16 +121,10 @@ export class BabylonTileContent {
                 // GLB loading happens async in background but doesn't block tile state transitions
                 
                 // TRUST CESIUM: Only set our internal ready flag, let Cesium handle tile properties
-                console.log(`🔍 CONTENT CREATED: Tile ${this._tile.id || 'unknown'} depth=${this._tile._depth} - trusting Cesium lifecycle`, {
-                    naturalHasRenderableContent: this._tile.hasRenderableContent,
-                    naturalContentState: this._tile._contentState,
-                    naturalContentAvailable: this._tile.contentAvailable
-                });
                 
                 // Only set our internal ready flag - let Cesium control tile properties
                 this._ready = true;
                 
-                console.log(`🚀 BABYLON CONTENT READY: Tile ${this._tile.id || 'unknown'} depth=${this._tile._depth} - ready=${this._ready}, waiting for Cesium process() call`);
                 
             } else {
                 // Unsupported content type - let Cesium handle this naturally
@@ -181,24 +170,22 @@ export class BabylonTileContent {
             
             // CESIUM MATCH: Tiles are visible if they're in the selected tiles array
             // BaseTraversal already did all the refinement logic and _selectedFrame setting
-            const isInSelectedTiles = tileset._selectedTiles && tileset._selectedTiles.includes(this._tile);
+            const isInSelectedTiles = tileset.selectedTiles && tileset.selectedTiles.includes(this._tile);
             
-            // Debug logging disabled - system working
+            // One-time debug to confirm selectedTiles property works
+            if (!BabylonTileContent.selectedTilesFixLogged && tileset.selectedTiles) {
+                console.log('✅ SELECTED TILES FIX: Now checking tileset.selectedTiles (length:', tileset.selectedTiles.length, ')');
+                BabylonTileContent.selectedTilesFixLogged = true;
+            }
             
             if (isInSelectedTiles) {
                 this.show = true;
-                // Tile selection working - logging disabled
-            } else {
-                // HORIZON CULLING DEBUG: Rate-limit tile hiding logs to reduce spam
-                if (this._visible === true) {
-                    // Only log tile hiding every 5 seconds to avoid console spam
-                    const now = Date.now();
-                    if (!BabylonTileContent.lastHideLogTime || now - BabylonTileContent.lastHideLogTime > 5000) {
-                        const tileDesc = `depth=${this._tile._depth}, geomError=${this._tile.geometricError?.toFixed(0)}`;
-                        console.log(`🔴 HIDING TILES (${tileDesc}) - not in selected tiles (horizon culling working)`);
-                        BabylonTileContent.lastHideLogTime = now;
-                    }
+                // Log first successful tile selection
+                if (!BabylonTileContent.firstSelectionLogged) {
+                    console.log('🎉 FIRST TILE SELECTED: Babylon content now respecting Cesium selection!');
+                    BabylonTileContent.firstSelectionLogged = true;
                 }
+            } else {
                 this.show = false;
             }
             

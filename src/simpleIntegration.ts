@@ -160,6 +160,12 @@ export class SimpleIntegration {
             pass: (Cesium as any).Pass ? (Cesium as any).Pass.RENDER : 0,
             // Let Cesium use its default maximumScreenSpaceError for Google tiles
             tilesetPassState: this.renderTilesetPassState, // Required by CesiumTilesetDerived
+            // CREDIT DISPLAY: Enhanced implementation with clickable links and grouping
+            creditDisplay: {
+                addCreditToNextFrame: (credit: any) => {
+                    this.displayCredit(credit);
+                }
+            },
             // Additional properties from working commit 72dfb2e:
             pixelRatio: 1.0,
             mapProjection: new Cesium.GeographicProjection(),
@@ -173,8 +179,8 @@ export class SimpleIntegration {
             afterRender: []
         };
         
-        // DEBUG: Enhanced request and tile loading monitoring with deep scheduler analysis
-        if (Date.now() % 15000 < 16) { // Every 15 seconds
+        // DEBUG: Enhanced request and tile loading monitoring with deep scheduler analysis  
+        if (Date.now() % 60000 < 16) { // Every 60 seconds (reduced from 15)
             const RequestScheduler = (Cesium as any).RequestScheduler;
             const stats = this.cesiumTileset?.statistics;
             
@@ -248,50 +254,15 @@ export class SimpleIntegration {
             }
         }
         
-        // DEBUG: FRUSTUM ALIGNMENT - Compare Babylon vs Cesium 
-        if (Date.now() % 15000 < 16) { // Every 15 seconds
-            const babylonCamera = this.camera;
-            console.log('🔍 FRUSTUM ALIGNMENT CHECK:');
-            console.log('   Babylon Camera:', {
-                fov: `${(babylonCamera.fov * 180 / Math.PI).toFixed(1)}°`,
-                minZ: babylonCamera.minZ,
-                maxZ: babylonCamera.maxZ,
-                position: `(${babylonCamera.position.x.toFixed(0)}, ${babylonCamera.position.y.toFixed(0)}, ${babylonCamera.position.z.toFixed(0)})`
-            });
-            console.log('   Cesium Camera:', {
-                fov: `${(camera.frustum.fov * 180 / Math.PI).toFixed(1)}°`,
-                near: camera.frustum.near,
-                far: camera.frustum.far,
-                aspectRatio: camera.frustum.aspectRatio?.toFixed(3) || 'undefined',
-                position: `(${camera.position.x.toFixed(0)}, ${camera.position.y.toFixed(0)}, ${camera.position.z.toFixed(0)})`
-            });
-            console.log('   Context:', {
-                drawingBufferWidth: frameState.context.drawingBufferWidth,
-                drawingBufferHeight: frameState.context.drawingBufferHeight,
-                computedAspectRatio: (frameState.context.drawingBufferWidth / frameState.context.drawingBufferHeight).toFixed(3),
-                cullingVolumeExists: !!cullingVolume,
-                // NEW: Show the missing properties we added
-                hasTime: !!frameState.time,
-                newFrame: frameState.newFrame,
-                timeSeconds: frameState.time ? Cesium.JulianDate.toDate(frameState.time).getTime() : 'none'
-            });
-        }
 
         try {
-            // Log camera position occasionally to verify setup
-            if (Date.now() % 5000 < 16) { // ~Every 5 seconds
-                console.log('🎥 Camera position check:', {
-                    cesiumPos: { x: camera.position.x.toFixed(0), y: camera.position.y.toFixed(0), z: camera.position.z.toFixed(0) },
-                    direction: { x: camera.direction.x.toFixed(3), y: camera.direction.y.toFixed(3), z: camera.direction.z.toFixed(3) },
-                    babylonPos: { x: this.camera.position.x.toFixed(0), y: this.camera.position.y.toFixed(0), z: this.camera.position.z.toFixed(0) }
-                });
-            }
             
             // DEBUG: Add BaseTraversal request decision logging  
             this.addBaseTraversalRequestLogging();
             
-            // PHASE 1: Comprehensive diagnostic logging
-            if (Date.now() % 3000 < 16) { // Every 3 seconds
+            // PHASE 1: Comprehensive diagnostic logging - DISABLED (tiles working, too verbose)
+            // Re-enable this if debugging is needed by changing false to true
+            if (false && Date.now() % 3000 < 16) { // Disabled - change false to true if needed
                 console.log('\n🔍 === TRAVERSAL DIAGNOSTIC START ===');
                 
                 // 1. Root Tile Analysis
@@ -386,8 +357,9 @@ export class SimpleIntegration {
                 (this.cesiumTileset as any).postPassesUpdate(frameState);
             }
             
-            // PHASE 1: Post-update traversal analysis
-            if (Date.now() % 3000 < 16) { // Every 3 seconds - same timing as pre-update
+            // PHASE 1: Post-update traversal analysis - DISABLED (tiles working, too verbose)
+            // Re-enable this if debugging is needed by changing false to true
+            if (false && Date.now() % 3000 < 16) { // Disabled - change false to true if needed
                 console.log('\n🔍 POST-UPDATE TRAVERSAL RESULTS:');
                 
                 // 4. Traversal Statistics  
@@ -615,6 +587,114 @@ export class SimpleIntegration {
 
         // Traverse all tiles to find ones with native content that need replacement
         this.traverseTilesForContentReplacement(this.cesiumTileset.root, babylonScene, Cesium3DTileContentState);
+        
+        // TEST: Basic execution flow logging
+        if (frameState.frameNumber % 1000 === 0) { // Every ~30 seconds at 30fps
+            console.log('🔍 UPDATE METHOD EXECUTION CHECK:', {
+                frameNumber: frameState.frameNumber,
+                hasFrameState: !!frameState,
+                methodCalled: true,
+                timestamp: Date.now()
+            });
+        }
+        
+        // SIMPLIFIED: Force debug every 3 seconds for more frequent debugging
+        const now = Date.now();
+        const lastDebugTime = (this as any)._lastDistanceDebugTime || 0;
+        const timeSinceLastDebug = now - lastDebugTime;
+        
+        // DEBUG: Log timing information occasionally
+        if (frameState.frameNumber % 500 === 0) { // Every ~15 seconds
+            console.log('⏰ TIMING DEBUG:', {
+                now: now,
+                lastDebugTime: lastDebugTime,
+                timeSinceLastDebug: timeSinceLastDebug,
+                shouldTrigger: timeSinceLastDebug > 3000,
+                frameNumber: frameState.frameNumber
+            });
+        }
+        
+        // FORCE IMMEDIATE DEBUG on first few frames to test the code
+        const shouldForceDebug = frameState.frameNumber <= 10 || timeSinceLastDebug > 3000;
+        
+        if (shouldForceDebug) {
+            if (frameState.frameNumber <= 10) {
+                console.log('🚀 FORCING IMMEDIATE DEBUG - Frame', frameState.frameNumber);
+            }
+            (this as any)._lastDistanceDebugTime = now;
+            
+            console.log('🔄 DISTANCE DEBUG TRIGGER - Starting analysis...');
+            
+            try {
+                this.monitorTileSelection();
+                
+                // CRITICAL: Check if root tile distance is being calculated
+                const rootTile = this.cesiumTileset.root;
+                if (!rootTile) {
+                    console.error('❌ No root tile found!');
+                    return;
+                }
+                
+                console.log('🚨 ROOT TILE DISTANCE DEBUG:', {
+                    frameNumber: frameState.frameNumber,
+                    hasDistanceToCamera: rootTile.distanceToCamera !== undefined,
+                    distanceToCamera: rootTile.distanceToCamera,
+                    geometricError: rootTile.geometricError
+                });
+                
+                // Check bounding volume
+                const boundingVolume = rootTile._boundingVolume;
+                const boundingSphere = boundingVolume?.boundingSphere;
+                
+                console.log('🔍 BOUNDING VOLUME DEBUG:', {
+                    hasBoundingVolume: !!boundingVolume,
+                    boundingVolumeType: boundingVolume?.constructor?.name,
+                    hasBoundingSphere: !!boundingSphere,
+                    sphereCenter: boundingSphere?.center,
+                    sphereRadius: boundingSphere?.radius
+                });
+                
+                // Check camera
+                console.log('📷 CAMERA DEBUG:', {
+                    hasCamera: !!frameState.camera,
+                    hasPositionWC: !!frameState.camera?.positionWC,
+                    positionWC: frameState.camera?.positionWC,
+                    cameraType: frameState.camera?.constructor?.name || typeof frameState.camera
+                });
+                
+                // MANUAL DISTANCE CALCULATION TEST
+                if (boundingSphere && frameState.camera?.positionWC) {
+                    try {
+                        const distance = Cesium.Cartesian3.distance(
+                            boundingSphere.center, 
+                            frameState.camera.positionWC
+                        );
+                        const finalDistance = Math.max(0, distance - boundingSphere.radius);
+                        
+                        console.log('🧮 MANUAL DISTANCE CALCULATION:', {
+                            rawDistance: distance,
+                            sphereRadius: boundingSphere.radius,
+                            finalDistance: finalDistance
+                        });
+                    } catch (error) {
+                        console.error('❌ Manual distance calculation failed:', error);
+                    }
+                } else {
+                    console.warn('⚠️ Cannot calculate manual distance - missing bounding sphere or camera position');
+                }
+                
+                // TEST: Try calling Cesium's distance method directly
+                try {
+                    const cesiumDistance = rootTile.distanceToTile(frameState);
+                    console.log('🎯 CESIUM distanceToTile() RESULT:', cesiumDistance);
+                } catch (error) {
+                    console.error('❌ Cesium distanceToTile() failed:', error);
+                }
+                
+            } catch (error) {
+                console.error('❌ Distance debug analysis failed:', error);
+            }
+        }
     }
 
     /**
@@ -939,23 +1019,11 @@ export class SimpleIntegration {
                     const tile = args.find((arg: any) => arg && typeof arg === 'object' && arg.geometricError !== undefined);
                     const tileset = args.find((arg: any) => arg && typeof arg === 'object' && arg.asset !== undefined);
                     
-                    console.log(`🏭 FACTORY CALL: ${methodName}() - Args:`, {
-                        argsCount: args.length,
-                        hasArrayBuffer: !!arrayBuffer,
-                        arrayBufferSize: arrayBuffer ? arrayBuffer.byteLength : 'none',
-                        hasTile: !!tile,
-                        tileId: tile ? tile.id || 'no-id' : 'none',
-                        tileGeomError: tile ? tile.geometricError : 'none',
-                        hasTileset: !!tileset
-                    });
-                    
                     if (arrayBuffer && tile) {
-                        console.log(`🎯 CREATING BABYLON CONTENT: ${methodName} for tile ${tile.id || 'unknown'}`);
                         // Creating Babylon content
                         return new BabylonTileContent(babylonScene, tile, arrayBuffer, tileset || this.cesiumTileset);
                     }
                     
-                    console.log(`⚠️ FALLBACK: ${methodName} using original method (no arrayBuffer or tile)`);
                     // Fall back to original method
                     return originalMethod.apply(this, args);
                 };
@@ -988,7 +1056,6 @@ export class SimpleIntegration {
                     // Only log when content actually loads (factory gets called)
                     if (promise && typeof promise.then === 'function') {
                         promise.then((content: any) => {
-                            console.log('✅ Content loaded:', this._contentResource.url?.split('/').pop()?.split('?')[0] || 'unknown');
                         }).catch((error: any) => {
                             console.error('❌ Content failed:', error.message || error);
                         });
@@ -1064,55 +1131,29 @@ export class SimpleIntegration {
             if (BaseTraversal && BaseTraversal.selectTiles) {
                 const originalSelectTiles = BaseTraversal.selectTiles;
                 BaseTraversal.selectTiles = function(tileset: any, frameState: any) {
-                    console.log('🎯 BaseTraversal.selectTiles() CALLED:', {
-                        rootExists: !!tileset.root,
-                        frameNumber: frameState.frameNumber,
-                        cameraPosition: frameState.camera.position ? 
-                            `(${frameState.camera.position.x.toFixed(0)}, ${frameState.camera.position.y.toFixed(0)}, ${frameState.camera.position.z.toFixed(0)})` : 
-                            'unknown'
-                    });
-                    
+                    // Trust Cesium's logic completely - just call original
                     const result = originalSelectTiles.call(this, tileset, frameState);
                     
-                    // Log results after traversal
-                    console.log('🎯 BaseTraversal.selectTiles() COMPLETE:', {
-                        selectedTiles: tileset.selectedTiles?.length || 0,
-                        visitedTiles: tileset.statistics?.visited || 0,
-                        requestedTiles: tileset.statistics?.numberOfTilesRequested || 0
-                    });
+                    // Minimal logging only every 10 seconds to check progress
+                    const shouldLog = frameState.frameNumber % 300 === 0;
+                    if (shouldLog && tileset.root) {
+                        console.log('🎯 Tile Selection Status:', {
+                            selectedTiles: tileset.selectedTiles?.length || 0,
+                            visitedTiles: tileset.statistics?.visited || 0
+                        });
+                    }
                     
                     return result;
                 };
-                console.log('✅ Hooked BaseTraversal.selectTiles()');
+                console.log('✅ Hooked BaseTraversal.selectTiles() with reduced logging');
             }
             
             // Hook into individual tile loading decision - Cesium3DTilesetTraversal.loadTile()
-            const TilesetTraversal = (Cesium as any).Cesium3DTilesetTraversal;
-            if (TilesetTraversal && TilesetTraversal.loadTile) {
-                const originalLoadTile = TilesetTraversal.loadTile;
-                TilesetTraversal.loadTile = function(tile: any, frameState: any) {
-                    console.log('🔄 TilesetTraversal.loadTile() CALLED:', {
-                        tileId: tile.id || 'unknown',
-                        depth: tile._depth || 'unknown',
-                        geometricError: tile.geometricError,
-                        hasContent: !!tile._content,
-                        contentState: tile._contentState,
-                        hasRenderableContent: tile.hasRenderableContent,
-                        contentAvailable: tile.contentAvailable
-                    });
-                    
-                    const result = originalLoadTile.call(this, tile, frameState);
-                    
-                    console.log('🔄 TilesetTraversal.loadTile() RESULT:', {
-                        tileId: tile.id || 'unknown',
-                        wasLoaded: !!result,
-                        newContentState: tile._contentState
-                    });
-                    
-                    return result;
-                };
-                console.log('✅ Hooked TilesetTraversal.loadTile()');
-            }
+            // DISABLED: Too verbose now that tiles are working
+            // const TilesetTraversal = (Cesium as any).Cesium3DTilesetTraversal;
+            // if (TilesetTraversal && TilesetTraversal.loadTile) {
+            //     console.log('✅ TilesetTraversal.loadTile() monitoring available but disabled for noise reduction');
+            // }
             
             // Hook into tile request content - this is where tiles actually get queued for loading
             const Cesium3DTilePrototype = (Cesium as any).Cesium3DTile?.prototype;
@@ -1121,36 +1162,20 @@ export class SimpleIntegration {
                 
                 const originalRequestContent = Cesium3DTilePrototype.requestContent;
                 Cesium3DTilePrototype.requestContent = function() {
-                    console.log('📡 Cesium3DTile.requestContent() CALLED:', {
-                        tileId: this.id || 'unknown',
-                        depth: this._depth || 'unknown',
-                        geometricError: this.geometricError,
-                        priority: this._priority,
-                        url: this._contentResource?.url?.split('/').pop()?.split('?')[0] || 'unknown',
-                        contentState: this._contentState
-                    });
-                    
+                    // REDUCED LOGGING: Only log results, not every request attempt
                     const promise = originalRequestContent.call(this);
                     
                     if (promise) {
                         promise.then((content: any) => {
-                            console.log('📡 Cesium3DTile.requestContent() SUCCESS:', {
-                                tileId: this.id || 'unknown',
-                                contentType: content?.constructor?.name || 'unknown',
-                                newContentState: this._contentState
-                            });
                         }).catch((error: any) => {
-                            console.log('📡 Cesium3DTile.requestContent() FAILED:', {
-                                tileId: this.id || 'unknown',
-                                error: error.message || error
+                            console.error('❌ Tile loading failed:', {
+                                depth: this._depth || 'unknown', 
+                                error: error.message || error,
+                                url: this._contentResource?.url?.split('/').pop()?.split('?')[0] || 'unknown'
                             });
-                        });
-                    } else {
-                        console.log('📡 Cesium3DTile.requestContent() THROTTLED:', {
-                            tileId: this.id || 'unknown',
-                            note: 'RequestScheduler deferred request'
                         });
                     }
+                    // No longer log throttling - it's normal and too noisy
                     
                     return promise;
                 };
@@ -1366,6 +1391,249 @@ export class SimpleIntegration {
                 console.log(`⏱️ OPTIMIZED ${prop}: ${original}ms → ${RequestScheduler[prop]}ms`);
             }
         });
+    }
+    
+    // Credit tracking with table display
+    private creditData: {[key: string]: {source: string, url?: string}} = {};
+    private lastCreditTableUpdate: number = 0;
+    
+    /**
+     * Clean credit display using console.table() - updates in place
+     */
+    private displayCredit(credit: any): void {
+        try {
+            
+            let creditText = '';
+            let creditUrl = '';
+            
+            // Parse different credit formats
+            if (typeof credit === 'string') {
+                creditText = credit;
+            } else if (credit && typeof credit === 'object') {
+                // ENHANCED: Handle Cesium Credit objects properly
+                
+                // Try standard properties first
+                creditText = credit.text || credit.title || credit.attribution || '';
+                creditUrl = credit.link || credit.url || credit.href || '';
+                
+                // Handle HTML content
+                if (!creditText && credit.html) {
+                    creditText = credit.html.replace(/<[^>]*>/g, '').trim();
+                }
+                
+                // Handle DOM elements (if credit has element property)
+                if (!creditText && credit.element) {
+                    creditText = credit.element.textContent || credit.element.innerText || '';
+                }
+                
+                // Handle Cesium private properties
+                if (!creditText && credit._text) {
+                    creditText = credit._text;
+                }
+                
+                // Handle nested credit structures
+                if (!creditText && credit.credit) {
+                    creditText = credit.credit.text || credit.credit.title || credit.credit._text || '';
+                    creditUrl = credit.credit.link || credit.credit.url || credit.credit.href || '';
+                }
+                
+                // Try common property names
+                if (!creditText) {
+                    const textProps = ['label', 'content', 'name', 'description', 'caption'];
+                    for (const prop of textProps) {
+                        if (credit[prop] && typeof credit[prop] === 'string') {
+                            creditText = credit[prop];
+                            break;
+                        }
+                    }
+                }
+                
+                // Extract URL from HTML
+                if (!creditUrl && credit.html) {
+                    const urlMatch = credit.html.match(/href=["']([^"']+)["']/);
+                    if (urlMatch) {
+                        creditUrl = urlMatch[1];
+                    }
+                }
+                
+                // Extract URL from _html and parse text too
+                if (credit._html) {
+                    const urlMatch = credit._html.match(/href=["']([^"']+)["']/);
+                    if (urlMatch && !creditUrl) {
+                        creditUrl = urlMatch[1];
+                    }
+                    
+                    // Extract text from HTML if we don't have text yet
+                    if (!creditText) {
+                        try {
+                            const tempDiv = document.createElement('div');
+                            tempDiv.innerHTML = credit._html;
+                            creditText = tempDiv.textContent || tempDiv.innerText || '';
+                            
+                            // If HTML parsing resulted in empty/whitespace, try alt text or URL domain
+                            if (!creditText || !creditText.trim()) {
+                                // Try to extract alt text from img tags
+                                const altMatch = credit._html.match(/alt=["']([^"']+)["']/);
+                                if (altMatch) {
+                                    creditText = altMatch[1];
+                                } else if (creditUrl) {
+                                    // Use domain from URL as fallback
+                                    try {
+                                        const domain = new URL(creditUrl).hostname;
+                                        creditText = domain.replace('www.', '');
+                                    } catch (e) {
+                                        creditText = creditUrl;
+                                    }
+                                }
+                            }
+                        } catch (e) {
+                            // Fallback to regex if DOM parsing fails
+                            creditText = credit._html.replace(/<[^>]*>/g, '').trim();
+                        }
+                    }
+                }
+                
+            }
+            
+            // Better fallback for objects
+            if (!creditText) {
+                if (typeof credit === 'object' && credit !== null) {
+                    // Try to create a meaningful representation
+                    try {
+                        creditText = JSON.stringify(credit);
+                        // If JSON is too long, truncate it
+                        if (creditText.length > 100) {
+                            creditText = creditText.substring(0, 97) + '...';
+                        }
+                    } catch (e) {
+                        creditText = Object.prototype.toString.call(credit);
+                    }
+                } else {
+                    creditText = String(credit);
+                }
+            }
+            
+            // Clean up and categorize credit
+            creditText = creditText.trim();
+            if (!creditText || creditText.length < 2) {
+                return; // Skip empty or too-short credits
+            }
+            
+            // Skip only truly problematic or unhelpful credits
+            if (creditText === '[object Object]' ||
+                creditText === '{}' ||
+                creditText === 'null' ||
+                creditText === 'undefined' ||
+                creditText === '') {
+                return; // Skip only truly empty/broken credit representations
+            }
+            
+            // Create meaningful key for the table
+            let creditKey = creditText;
+            if (creditText.includes('Google')) {
+                creditKey = 'Google 3D Tiles';
+                creditText = '© Google'; // Clean up Google credits
+            } else if (creditText.includes('Cesium')) {
+                creditKey = 'Cesium Platform';
+                if (creditText.includes('Upgrade') || creditText.includes('commercial')) {
+                    creditKey = 'Cesium Licensing';
+                }
+            } else if (creditText.length > 30) {
+                creditKey = creditText.substring(0, 27) + '...';
+            }
+            
+            // Add to credit table data
+            this.creditData[creditKey] = {
+                source: creditText,
+                ...(creditUrl && { url: creditUrl })
+            };
+            
+            // Update table periodically (every 10 seconds) to avoid spam
+            const now = Date.now();
+            const timeSinceUpdate = now - this.lastCreditTableUpdate;
+            
+            if (timeSinceUpdate > 10000) {
+                this.lastCreditTableUpdate = now;
+                this.updateCreditTable();
+            }
+            
+        } catch (error) {
+            // Silent fallback - don't spam errors
+            console.debug('Credit parsing error:', error);
+        }
+    }
+    
+    /**
+     * Update the credit table display
+     */
+    private updateCreditTable(): void {
+        const creditKeys = Object.keys(this.creditData);
+        
+        if (creditKeys.length > 0) {
+            console.log('📋 CESIUM DATA ATTRIBUTION:');
+            console.table(this.creditData);
+        }
+    }
+    
+    /**
+     * Monitor tile selection for parent hiding issues
+     */
+    private monitorTileSelection(): void {
+        if (!this.cesiumTileset) return;
+        
+        // Check selected tiles for parent-child overlap
+        const selectedTiles = this.cesiumTileset.selectedTiles || [];
+        const stats = this.cesiumTileset.statistics;
+        
+        if (selectedTiles.length > 0) {
+            // Group tiles by depth
+            const tilesByDepth: { [depth: number]: any[] } = {};
+            const parentChildPairs: Array<{parent: any, children: any[]}> = [];
+            
+            for (const tile of selectedTiles) {
+                const depth = tile._depth || 0;
+                if (!tilesByDepth[depth]) {
+                    tilesByDepth[depth] = [];
+                }
+                tilesByDepth[depth].push(tile);
+                
+                // Check if this tile has selected children
+                if (tile.children) {
+                    const selectedChildren = tile.children.filter((child: any) => 
+                        child._selectedFrame === this.cesiumTileset._selectedFrame
+                    );
+                    
+                    if (selectedChildren.length > 0) {
+                        parentChildPairs.push({ parent: tile, children: selectedChildren });
+                    }
+                }
+            }
+            
+            console.log('🔍 TILE SELECTION ANALYSIS:', {
+                totalSelected: selectedTiles.length,
+                tilesByDepth: Object.keys(tilesByDepth).map(depth => 
+                    `Depth ${depth}: ${tilesByDepth[parseInt(depth)].length} tiles`
+                ),
+                parentChildOverlaps: parentChildPairs.length,
+                memoryUsage: `${(stats.geometryByteLength || 0) / 1024 / 1024} MB`,
+                refinementStrategy: this.cesiumTileset.skipLevelOfDetail ? 'SkipTraversal' : 'BaseTraversal'
+            });
+            
+            // Report parent-child overlap issues
+            if (parentChildPairs.length > 0) {
+                console.log('⚠️ PARENT-CHILD OVERLAP DETECTED:', {
+                    count: parentChildPairs.length,
+                    examples: parentChildPairs.slice(0, 3).map(pair => ({
+                        parentDepth: pair.parent._depth,
+                        parentId: pair.parent.id || 'no-id',
+                        selectedChildrenCount: pair.children.length,
+                        childDepths: pair.children.map((c: any) => c._depth)
+                    }))
+                });
+                
+                console.log('💡 REFINEMENT HINT: In REPLACE refinement, parent tiles should be hidden when children are selected');
+            }
+        }
     }
     
     /**

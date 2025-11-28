@@ -128,11 +128,6 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
         //     console.log(`🏗️ TILE ${BabylonModel3DTileContent._tileCount}: Starting async load (${this._arrayBuffer.byteLength} bytes)`);
         // }
         
-        console.log(`🚀 CONSTRUCTOR MODEL: Tile ${this._tile.id || 'unknown'} depth=${this._tile._depth} content created - trusting Cesium`, {
-            initialContentState: this._tile._contentState,
-            initialHasRenderableContent: this._tile.hasRenderableContent,
-            ready: this._ready
-        });
         
         // BACKGROUND LOADING: Meshes load async but don't block tile selection
         // This matches how native Cesium handles content loading
@@ -156,7 +151,6 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
         // Load meshes in background - tile is already marked as ready for traversal
         this.initializeDirectGLB().then(() => {
             // Meshes loaded successfully - update visibility if tile is selected
-            console.log(`🎨 MESHES LOADED: ${this._meshes?.length || 0} meshes for tile ${this._tile.id || 'unknown'}`);
             this.updateVisibility();
         }).catch((error) => {
             console.error('Failed to load model meshes (tile still selectable):', error);
@@ -363,7 +357,6 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
             
             // BACKGROUND COMPLETE: Meshes loaded successfully
             BabylonModel3DTileContent._completedCount++;
-            console.log(`✅ MESHES READY: ${this._meshes.length} meshes loaded for tile ${this._tile.id || 'unknown'}`);
             
             // Update visibility in case tile is already selected
             this.updateVisibility();
@@ -419,7 +412,6 @@ export class BabylonModel3DTileContent extends Babylon3DTileContentBase {
             
             // BACKGROUND COMPLETE: Meshes loaded successfully
             BabylonModel3DTileContent._completedCount++;
-            console.log(`✅ MESHES READY: ${this._meshes.length} meshes loaded for tile ${this._tile.id || 'unknown'}`);
             
             // Update visibility in case tile is already selected
             this.updateVisibility();
