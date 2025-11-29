@@ -38,9 +38,9 @@ window.addEventListener('DOMContentLoaded', async () => {
     function createScene(): Scene {
         const scene = new Scene(engine);
         
-        // TESTING: Use Babylon's default LEFT-HANDED system first, then handle handedness conversion
-        scene.useRightHandedSystem = false;
-        console.log(`🧭 COORDINATE SYSTEM: Babylon.js scene using DEFAULT LEFT-HANDED coordinates`);
+        // HANDEDNESS TEST: Try RIGHT-HANDED to match Cesium coordinate system
+        scene.useRightHandedSystem = true;
+        console.log(`🧭 COORDINATE SYSTEM: Babylon.js scene using RIGHT-HANDED coordinates (TEST)`);
         console.log(`🔍 HANDEDNESS VERIFICATION: scene.useRightHandedSystem = ${scene.useRightHandedSystem}`);
         
         // Setup FreeCamera for 3D world viewing (Earth-scale coordinates)
@@ -59,8 +59,8 @@ window.addEventListener('DOMContentLoaded', async () => {
         camera.keysDownward = [69]; // E
         
         // CRITICAL: Near-Cesium frustum parameters for Google Tilesets
-        camera.minZ = 1.0;            // Near: 1m (with logarithmic depth buffer)
-        camera.maxZ = 500000000;      // Far: 500,000km (Cesium's exact default)
+        camera.minZ = 1000;           // Near: 1km (working commit configuration)
+        camera.maxZ = 200000000;      // Far: 200,000km (working commit configuration)
         
         // Make camera movement faster for large scale
         // Mouse wheel sensitivity for zooming
@@ -149,11 +149,15 @@ window.addEventListener('DOMContentLoaded', async () => {
             // Store for reference
             (window as any).originalNYCEcef = cameraPositionCesium;
             
-            // WORKING CONFIG: Left-handed Babylon with Y↔Z transformation (from working commit 1012957)
-            // Cesium ECEF (Z-up) → Babylon (Y-up): (X, Y, Z) → (X, Z, Y)
-            const nycSurface = new Vector3(nycSurfaceCesium.x, nycSurfaceCesium.z, nycSurfaceCesium.y);
-            const cameraPosition = new Vector3(cameraPositionCesium.x, cameraPositionCesium.z, cameraPositionCesium.y);
+            // ECEF → BABYLON: Coordinate system alignment transform (X, Y, Z) → (X, Z, -Y)
+            // Aligns Cesium Earth-centered coordinates to Babylon view-centered coordinates
+            const nycSurface = new Vector3(nycSurfaceCesium.x, nycSurfaceCesium.z, -nycSurfaceCesium.y);
+            const cameraPosition = new Vector3(cameraPositionCesium.x, cameraPositionCesium.z, -cameraPositionCesium.y);
             
+            console.log('📍 COORDINATE SYSTEM ALIGNMENT:');
+            console.log('   Cesium ECEF (X=Greenwich, Y=90°E, Z=North):', { x: cameraPositionCesium.x, y: cameraPositionCesium.y, z: cameraPositionCesium.z });
+            console.log('   Babylon (X=right, Y=up, Z=forward):', { x: cameraPosition.x, y: cameraPosition.y, z: cameraPosition.z });
+            console.log('   Transform: (X,Y,Z) → (X,Z,-Y) - aligns Earth-centered to view-centered');
             console.log('📍 BABYLON CAMERA POSITIONING:', {
                 nycSurfaceBabylon: { x: nycSurface.x, y: nycSurface.y, z: nycSurface.z },
                 cameraPositionBabylon: { x: cameraPosition.x, y: cameraPosition.y, z: cameraPosition.z },
@@ -168,10 +172,14 @@ window.addEventListener('DOMContentLoaded', async () => {
             camera.position = cameraPosition;
             camera.setTarget(nycSurface);
             
-            console.log('🎯 CAMERA SETUP COMPLETE:', {
-                actualCameraPosition: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
-                cameraTarget: { x: nycSurface.x, y: nycSurface.y, z: nycSurface.z },
-                cameraDirection: camera.getDirection(Vector3.Forward())
+            console.log('🎯 RIGHT-HANDED CAMERA DEBUG:', {
+                intendedPosition: { x: cameraPosition.x, y: cameraPosition.y, z: cameraPosition.z },
+                actualPosition: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+                intendedTarget: { x: nycSurface.x, y: nycSurface.y, z: nycSurface.z },
+                actualDirection: camera.getDirection(Vector3.Forward()),
+                distanceToTarget: Vector3.Distance(camera.position, nycSurface),
+                expectedDistance: cameraAltitude,
+                handedness: 'RIGHT-HANDED (NEW)'
             });
             
             // Add keyboard controls for camera speed (1-9 keys)
