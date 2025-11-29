@@ -38,10 +38,7 @@ export class SimpleBabylonTileContent {
             const blob = new Blob([gltfData], { type: 'model/gltf-binary' });
             const objectURL = URL.createObjectURL(blob);
 
-            // Silent loading for depths > 2 to reduce spam
-            if (this._tile._depth <= 2) {
-                console.log(`🔄 Loading tile: depth=${this._tile._depth}, size=${(gltfData.length/1000).toFixed(0)}kb`);
-            }
+            // Loading tile content
 
             // Load with Babylon's SceneLoader using proper glTF plugin
             const result = await SceneLoader.ImportMeshAsync(
@@ -238,29 +235,20 @@ export class SimpleBabylonTileContent {
 
     update(tileset: any, frameState: any): void {
         // Follow Cesium's Model3DTileContent.update() pattern exactly
-        // The key is applying the computed transform on every frame update
+        // The key is responding to Cesium's tile visibility decisions
         
         if (!this._ready || !this._meshes || this._meshes.length === 0) {
             return;
         }
 
-        // Check if the tile's computed transform has changed
-        // This can happen as the camera moves and tiles are updated
+        // Keep tiles visible by default - let Cesium handle selection naturally
+        // Don't interfere with Cesium's tile visibility decisions
+        
+        // Apply transform updates if needed
         const currentTransform = this._tile.computedTransform;
         if (currentTransform) {
-            // For now, we apply transforms once during loading
-            // But we could add dynamic transform updates here if needed
-            
-            // Example of what Cesium does:
-            // model.modelMatrix = tile.computedTransform;
-            // model.update(frameState);
+            // Transform updates could go here if needed
         }
-        
-        // Future enhancements could include:
-        // - Dynamic LOD updates
-        // - Animation updates  
-        // - Clipping plane updates
-        // - Style updates
     }
 
     pick(_ray: any, _frameState: any, _result?: any): undefined {

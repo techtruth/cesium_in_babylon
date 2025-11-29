@@ -56,14 +56,7 @@ export class SimpleIntegration {
         const direction = new Cesium.Cartesian3(babylonDir.x, -babylonDir.z, babylonDir.y);
         const up = new Cesium.Cartesian3(babylonUp.x, -babylonUp.z, babylonUp.y);
         
-        // DEBUG: Coordinate alignment (only log occasionally)
-        if (this.frameCount % 600 === 0) {
-            console.log('🔄 COORDINATE ALIGNMENT:', {
-                babylonViewCentered: { pos: `(${babylonPos.x.toFixed(0)}, ${babylonPos.y.toFixed(0)}, ${babylonPos.z.toFixed(0)})` },
-                cesiumEarthCentered: { pos: `(${position.x.toFixed(0)}, ${position.y.toFixed(0)}, ${position.z.toFixed(0)})` },
-                transform: 'View-centered → Earth-centered: (X,Y,Z) → (X,-Z,Y)'
-            });
-        }
+        // Coordinate alignment: Babylon view-centered → Cesium Earth-centered
         
         // Normalize vectors
         Cesium.Cartesian3.normalize(direction, direction);
@@ -1031,7 +1024,7 @@ export class SimpleIntegration {
         // Replace GLB factory method
         Cesium3DTileContentFactory.glb = function(tileset: any, tile: any, resource: any, arrayBuffer: ArrayBuffer, byteOffset: number) {
             factoryCallCounts.glb++;
-            console.log(`🏭 CESIUM GLB FACTORY: Called with Babylon override (${factoryCallCounts.glb})`);
+            // GLB factory creating Babylon content
             
             // Extract GLB data from the offset
             const glbData = arrayBuffer.slice(byteOffset);

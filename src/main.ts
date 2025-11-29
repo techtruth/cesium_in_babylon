@@ -154,10 +154,7 @@ window.addEventListener('DOMContentLoaded', async () => {
             const nycSurface = new Vector3(nycSurfaceCesium.x, nycSurfaceCesium.z, -nycSurfaceCesium.y);
             const cameraPosition = new Vector3(cameraPositionCesium.x, cameraPositionCesium.z, -cameraPositionCesium.y);
             
-            console.log('📍 COORDINATE SYSTEM ALIGNMENT:');
-            console.log('   Cesium ECEF (X=Greenwich, Y=90°E, Z=North):', { x: cameraPositionCesium.x, y: cameraPositionCesium.y, z: cameraPositionCesium.z });
-            console.log('   Babylon (X=right, Y=up, Z=forward):', { x: cameraPosition.x, y: cameraPosition.y, z: cameraPosition.z });
-            console.log('   Transform: (X,Y,Z) → (X,Z,-Y) - aligns Earth-centered to view-centered');
+            // Coordinate system alignment: Cesium ECEF → Babylon view-centered
             console.log('📍 BABYLON CAMERA POSITIONING:', {
                 nycSurfaceBabylon: { x: nycSurface.x, y: nycSurface.y, z: nycSurface.z },
                 cameraPositionBabylon: { x: cameraPosition.x, y: cameraPosition.y, z: cameraPosition.z },
@@ -172,15 +169,7 @@ window.addEventListener('DOMContentLoaded', async () => {
             camera.position = cameraPosition;
             camera.setTarget(nycSurface);
             
-            console.log('🎯 RIGHT-HANDED CAMERA DEBUG:', {
-                intendedPosition: { x: cameraPosition.x, y: cameraPosition.y, z: cameraPosition.z },
-                actualPosition: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
-                intendedTarget: { x: nycSurface.x, y: nycSurface.y, z: nycSurface.z },
-                actualDirection: camera.getDirection(Vector3.Forward()),
-                distanceToTarget: Vector3.Distance(camera.position, nycSurface),
-                expectedDistance: cameraAltitude,
-                handedness: 'RIGHT-HANDED (NEW)'
-            });
+            // Camera positioned and targeted at NYC
             
             // Add keyboard controls for camera speed (1-9 keys)
             window.addEventListener('keydown', (event) => {
