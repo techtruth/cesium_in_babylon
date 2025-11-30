@@ -21,7 +21,8 @@ export class SimpleIntegration {
         this.engine = engine;
         
         // Set up Cesium Ion authentication using native Cesium
-        Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI2ZWE4YWJjYy0wZTg4LTRhMjQtYjVmNy05M2E5NmZlMjczODAiLCJpZCI6MjIwODczLCJpYXQiOjE3MjIwNTEyNDJ9.hlVfaVjkU1E2K507a65UFUrC7Bh8clQJ2B7DrVfSAcw';
+        // TODO: Update with your new Cesium Ion token from https://cesium.com/ion/tokens
+        Cesium.Ion.defaultAccessToken = 'YOUR_NEW_CESIUM_ION_TOKEN_HERE';
         
         // BABYLON.JS: Set up proper Cesium content factory registration
         this.setupBabylonContentFactory();
@@ -41,6 +42,17 @@ export class SimpleIntegration {
             pass: Cesium3DTilePass.RENDER,
             commandList: [] // Required by CesiumTilesetDerived.js
         });
+    }
+
+    /**
+     * Calculate camera distance from Earth surface
+     */
+    private calculateCameraDistanceFromEarth(): number {
+        const babylonPos = this.camera.position;
+        const earthCenter = Vector3.Zero();
+        const distanceFromCenter = Vector3.Distance(babylonPos, earthCenter);
+        const earthRadius = 6378137; // WGS84 equatorial radius
+        return distanceFromCenter - earthRadius;
     }
 
     /**
@@ -67,10 +79,13 @@ export class SimpleIntegration {
         Cesium.Cartesian3.normalize(right, right);
 
         // Create frustum
+        // CRITICAL FIX: Use proper near plane value for geographic rendering
+        // Camera.minZ of 1000 was causing massive SSE values that break REPLACE refinement
+        // Geographic tilesets need near plane around 0.1-1.0, not 1000
         const frustum = new Cesium.PerspectiveFrustum({
             fov: this.camera.fov,
             aspectRatio: this.engine.getRenderWidth() / this.engine.getRenderHeight(),
-            near: this.camera.minZ,
+            near: 0.1, // Fixed: was this.camera.minZ (1000), now proper value for geographic rendering
             far: this.camera.maxZ
         });
 
@@ -138,13 +153,13 @@ export class SimpleIntegration {
                 enableCollision: true,                        // Official Google config
                 
                 // OFFICIAL: Cesium3DTileset defaults (confirmed from source)
-                maximumScreenSpaceError: 16,                  // Official default
-                skipLevelOfDetail: false,                     // Official: Uses BaseTraversal
-                baseScreenSpaceError: 1024,                   // Official default
-                skipScreenSpaceErrorFactor: 16,               // Official default
-                skipLevels: 1,                                // Official default
-                immediatelyLoadDesiredLevelOfDetail: false,   // Official default
-                loadSiblings: false,                          // Official default (changed from true)
+                maximumScreenSpaceError: 8,                   // Lower for more detail 
+                skipLevelOfDetail: true,                      // Enable aggressive LOD for deeper traversal
+                baseScreenSpaceError: 512,                    // Lower base SSE
+                skipScreenSpaceErrorFactor: 8,                // Lower skip factor  
+                skipLevels: 0,                                // Don't skip any levels
+                immediatelyLoadDesiredLevelOfDetail: true,    // Load desired detail immediately
+                loadSiblings: true,                           // Load sibling tiles for better coverage
                 
                 // STANDARD: Keep other working optimizations
                 cullWithChildrenBounds: true,
@@ -285,17 +300,135 @@ export class SimpleIntegration {
         };
 
         // CORE ISSUE: Focus on tile selection - why selectedCount = 0?
+        // WORKAROUND: Access internal _selectedTiles since public getter is missing
+        const selectedCount = (this.cesiumTileset as any)._selectedTiles?.length || 0;
         
-        // RIGHT-HANDED CAMERA TEST: Check tiles + camera positioning
+        // DEBUG SSE ISSUE: Log camera values to understand SSE calculation problem
+        if (this.frameCount % 300 === 0 && selectedCount > 0) {
+            const camera = this.createCesiumCamera();
+            console.log(`🔧 SSE DEBUG - Camera values that affect SSE calculation:`);
+            console.log(`   Position magnitude: ${Math.sqrt(camera.position.x*camera.position.x + camera.position.y*camera.position.y + camera.position.z*camera.position.z).toFixed(2)}`);
+            console.log(`   Near: ${camera.frustum.near}, Far: ${camera.frustum.far}, FOV: ${(camera.frustum.fov * 180/Math.PI).toFixed(1)}°`);
+            console.log(`   Camera distance from Earth: ${this.calculateCameraDistanceFromEarth().toFixed(2)}m`);
+        }
+        
+        // Simple 5-second reporting for debugging REPLACE refinement  
         if (this.frameCount % 300 === 0) {
-            const selectedCount = this.cesiumTileset.selectedTiles?.length || 0;
-            console.log('🧪 RIGHT-HANDED TEST RESULTS:', {
-                frameNumber: frameState.frameNumber,
-                selectedTiles: selectedCount,
-                geographicTiles: selectedCount > 0 ? 'NYC tiles loading ✅' : 'Still global tiles ❌',
-                cameraPosition: `(${camera.position.x.toFixed(0)}, ${camera.position.y.toFixed(0)}, ${camera.position.z.toFixed(0)})`,
-                nextStep: 'Check camera positioning over NYC tiles'
+            // Get more detailed tile info to understand depth issue
+            const selectedTiles = (this.cesiumTileset as any)._selectedTiles || [];
+            const depths = selectedTiles.map((t: any) => t._depth);
+            const maxDepth = depths.length > 0 ? Math.max(...depths) : 0;
+            const minDepth = depths.length > 0 ? Math.min(...depths) : 0;
+            
+            // DEBUG: Analyze refinement types and parent-child relationships
+            const refinementAnalysis = selectedTiles.map((tile: any) => ({
+                depth: tile._depth,
+                refine: tile.refine === 0 ? 'ADD' : tile.refine === 1 ? 'REPLACE' : 'UNKNOWN',
+                hasChildren: !!(tile.children?.length),
+                childCount: tile.children?.length || 0
+            }));
+            
+            const replaceTiles = refinementAnalysis.filter(t => t.refine === 'REPLACE');
+            const addTiles = refinementAnalysis.filter(t => t.refine === 'ADD');
+            
+            console.log(`📊 Selected tiles: ${selectedCount} | Depths: [${depths.join(', ')}] | Range: ${minDepth}-${maxDepth}`);
+            console.log(`   REPLACE tiles: ${replaceTiles.length}, ADD tiles: ${addTiles.length}`);
+            console.log(`   Camera altitude: ${this.calculateCameraDistanceFromEarth().toFixed(0)}m | Stats: visited=${this.cesiumTileset.statistics.visited}`);
+            
+            // Log potential REPLACE refinement issues
+            const replaceWithChildren = refinementAnalysis.filter(t => t.refine === 'REPLACE' && t.hasChildren);
+            if (replaceWithChildren.length > 0) {
+                console.log(`   ⚠️  REPLACE tiles with children selected: ${replaceWithChildren.length} (should be 0 for proper REPLACE refinement)`);
+                replaceWithChildren.forEach(tile => {
+                    console.log(`      Depth ${tile.depth}: ${tile.childCount} children`);
+                });
+                
+                // CRITICAL: Check if children are ready but not selected (timing issue)
+                selectedTiles.forEach((selectedTile: any) => {
+                    if (selectedTile.refine === 1 && selectedTile.children) { // REPLACE with children
+                        const childrenStates = selectedTile.children.map((child: any) => ({
+                            depth: child._depth,
+                            contentAvailable: child.contentAvailable,
+                            contentReady: child.contentReady,
+                            selected: selectedTiles.includes(child)
+                        }));
+                        const readyChildren = childrenStates.filter(c => c.contentReady);
+                        const availableChildren = childrenStates.filter(c => c.contentAvailable);
+                        
+                        if (readyChildren.length > 0 || availableChildren.length > 0) {
+                            console.log(`   🚨 SELECTION ALGORITHM ISSUE: depth ${selectedTile._depth} selected but children ready`);
+                            console.log(`      Parent SSE: ${selectedTile._screenSpaceError?.toFixed(2) || 'undefined'}, refine: ${selectedTile.refine === 1 ? 'REPLACE' : 'ADD'}`);
+                            console.log(`      Ready children: ${readyChildren.length}/${selectedTile.children.length}`);
+                            
+                            // Check if it's a screen space error issue - add detailed debug info
+                            const childSSEs = selectedTile.children.map((c: any) => c._screenSpaceError).filter((sse: any) => sse !== undefined);
+                            if (childSSEs.length > 0) {
+                                const avgChildSSE = childSSEs.reduce((a: number, b: number) => a + b, 0) / childSSEs.length;
+                                console.log(`      Parent vs child SSE: ${selectedTile._screenSpaceError?.toFixed(2)} vs ${avgChildSSE.toFixed(2)} (children should have lower SSE)`);
+                                
+                                // DEBUG SSE COMPONENTS - investigate what's causing massive SSE
+                                console.log(`      🔍 SSE DEBUG - Parent tile components:`);
+                                console.log(`         geometricError: ${selectedTile.geometricError}`);
+                                console.log(`         _distanceToCamera: ${selectedTile._distanceToCamera?.toFixed(2)}`);
+                                console.log(`         boundingVolume type: ${selectedTile.boundingVolume?.constructor.name}`);
+                                
+                                // Get camera frustum info
+                                const camera = this.createCesiumCamera();
+                                console.log(`         frustum.sseDenominator: ${(camera.frustum as any).sseDenominator?.toFixed(6)}`);
+                                console.log(`         frustum.fovy: ${camera.frustum.fov?.toFixed(6)} rad = ${(camera.frustum.fov * 180 / Math.PI)?.toFixed(2)}°`);
+                                
+                                // Manual SSE calculation to verify
+                                const distance = Math.max(selectedTile._distanceToCamera || 1, 0.0000001); // Cesium.Math.EPSILON7
+                                const height = 1.0; // Default height for SSE calculation
+                                const sseDenominator = (camera.frustum as any).sseDenominator || 1;
+                                const manualSSE = (selectedTile.geometricError * height) / (distance * sseDenominator);
+                                console.log(`         Manual SSE calc: (${selectedTile.geometricError} * ${height}) / (${distance.toFixed(2)} * ${sseDenominator.toFixed(6)}) = ${manualSSE.toFixed(2)}`);
+                            }
+                        }
+                    }
+                });
+            }
+        }
+        
+        // DEBUG: Focus on why selectedTiles = 0 - check traversal logic
+        if (this.frameCount % 300 === 0 && selectedCount === 0) {
+            const stats = this.cesiumTileset?.statistics;
+            const root = this.cesiumTileset?.root;
+            
+            console.log('🔍 SELECTION DEBUG - Why no tiles selected?');
+            console.log('   Root tile state:', {
+                contentAvailable: root?.contentAvailable,
+                hasRenderableContent: root?.hasRenderableContent,
+                hasEmptyContent: root?.hasEmptyContent,
+                contentReady: root?.contentReady,
+                contentState: root?._contentState,
+                hasChildren: !!root?.children?.length,
+                childrenCount: root?.children?.length || 0
             });
+            
+            console.log('   Tileset stats:', {
+                visited: stats?.visited || 0,
+                selected: stats?.selected || 0,
+                numberOfCommands: stats?.numberOfCommands || 0,
+                numberOfPendingRequests: stats?.numberOfPendingRequests || 0,
+                numberOfTilesWithContentReady: stats?.numberOfTilesWithContentReady || 0
+            });
+            
+            console.log('   Traversal type:', this.cesiumTileset?.isSkippingLevelOfDetail ? 'SkipTraversal' : 'BaseTraversal');
+            
+            // CHECK: If root has empty content but children exist, does traversal proceed?
+            if (root?.hasEmptyContent && root?.children?.length > 0) {
+                console.log('   ROOT ANALYSIS: Empty root with children - checking first child:');
+                const firstChild = root.children[0];
+                console.log('     First child:', {
+                    contentAvailable: firstChild?.contentAvailable,
+                    hasRenderableContent: firstChild?.hasRenderableContent,
+                    hasEmptyContent: firstChild?.hasEmptyContent,
+                    contentState: firstChild?._contentState,
+                    boundingSphere: !!firstChild?.boundingSphere,
+                    contentUrl: firstChild?._contentResource?.url || 'none'
+                });
+            }
         }
         
         // DEBUG: Enhanced request and tile loading monitoring with deep scheduler analysis  
@@ -463,14 +596,41 @@ export class SimpleIntegration {
             );
             (this.cesiumTileset as any)._timeSinceLoad = timeSinceLoad;
             
-            // CESIUM SCENE PATTERN: Use proper pass sequence for native behavior
-            // 1. prePassesUpdate() - handles dynamic SSE, timing, preprocessing
+            // DEBUG: Check processing queue BEFORE update
+            const processingQueueBefore = (this.cesiumTileset as any)._processingQueue?.length || 0;
+            
+            // NATIVE CESIUM PATTERN: Follow exact sequence like native Cesium Scene
+            // 1. prePassesUpdate() - processes tiles in PROCESSING state to READY
             if (typeof (this.cesiumTileset as any).prePassesUpdate === 'function') {
                 (this.cesiumTileset as any).prePassesUpdate(frameState);
             }
             
-            // 2. main update() - performs traversal with correct SSE values  
+            // 2. main update() - traversal, selection, and content loading
             this.cesiumTileset.update(frameState);
+            
+            // DEBUG: Check processing queue AFTER update
+            const processingQueueAfter = (this.cesiumTileset as any)._processingQueue?.length || 0;
+            
+            // DEBUG: Check if selectedTiles gets populated after update  
+            const selectedAfterUpdate = (this.cesiumTileset as any)._selectedTiles?.length || 0;
+            if (this.frameCount % 900 === 0) {
+                console.log(`🔍 POST-UPDATE: selectedTiles: ${selectedAfterUpdate}, stats.selected: ${this.cesiumTileset.statistics?.selected || 0}`);
+                
+                // DEBUG: Processing queue status
+                console.log(`   Processing queue: before=${processingQueueBefore}, after=${processingQueueAfter}`);
+                
+                // DEBUG: Check internal tileset state for selected tiles
+                const internalSelected = (this.cesiumTileset as any)._selectedTiles?.length || 0;
+                const internalStats = this.cesiumTileset.statistics;
+                console.log(`   Internal _selectedTiles: ${internalSelected}`);
+                console.log(`   Stats breakdown:`, {
+                    visited: internalStats?.visited || 0,
+                    selected: internalStats?.selected || 0,
+                    numberOfCommands: internalStats?.numberOfCommands || 0,
+                    numberOfTilesWithContentReady: internalStats?.numberOfTilesWithContentReady || 0,
+                    numberOfTilesProcessing: internalStats?.numberOfTilesProcessing || 0
+                });
+            }
             
             // 3. postPassesUpdate() - cleanup, request scheduling, cache management
             if (typeof (this.cesiumTileset as any).postPassesUpdate === 'function') {
@@ -481,7 +641,7 @@ export class SimpleIntegration {
             this.applyTransformsToSelectedTiles();
             
             // DEBUG: Check if tileset configuration is preventing tile selection
-            if (this.frameCount % 300 === 0 && this.cesiumTileset._selectedTiles.length === 0) {
+            if (this.frameCount % 300 === 0 && (this.cesiumTileset as any)._selectedTiles.length === 0) {
                 console.log('🔧 TILESET CONFIGURATION DEBUG:', {
                     maximumScreenSpaceError: this.cesiumTileset.maximumScreenSpaceError,
                     skipLevelOfDetail: this.cesiumTileset.skipLevelOfDetail,
@@ -510,12 +670,12 @@ export class SimpleIntegration {
                     numberOfPendingRequests: stats.numberOfPendingRequests || 0,
                     numberOfTilesProcessing: stats.numberOfTilesProcessing || 0,
                     // DEBUG: Track content loading progress
-                    numberOfTilesWithContent: (this.cesiumTileset.selectedTiles || []).filter((t: any) => t._content).length,
-                    numberOfTilesReady: (this.cesiumTileset.selectedTiles || []).filter((t: any) => t._contentState === 3).length // READY = 3
+                    numberOfTilesWithContent: ((this.cesiumTileset as any)._selectedTiles || []).filter((t: any) => t._content).length,
+                    numberOfTilesReady: ((this.cesiumTileset as any)._selectedTiles || []).filter((t: any) => t._contentState === 3).length // READY = 3
                 });
                 
                 // 5. Selected Tiles Analysis
-                const selectedTiles = this.cesiumTileset.selectedTiles || [];
+                const selectedTiles = (this.cesiumTileset as any)._selectedTiles || [];
                 console.log('🎯 SELECTED TILES:', {
                     count: selectedTiles.length,
                     firstFewTiles: selectedTiles.slice(0, 3).map(tile => ({
@@ -675,19 +835,10 @@ export class SimpleIntegration {
             // Use native Cesium ready state pattern instead of ready property
             const readyState = !!(this.cesiumTileset.root && this.cesiumTileset.asset);
             // Quiet down the constant logging - only log if tiles are actually selected or every 10 seconds
-            const selectedCount = this.cesiumTileset.selectedTiles?.length || 0;
-            if (selectedCount > 0 || Date.now() % 10000 < 16) {
-                // DEBUG: Comprehensive tile selection analysis
-                const stats = this.cesiumTileset.statistics;
-                const actualSelectedTiles = this.cesiumTileset.selectedTiles;
-                const numberOfTilesSelected = stats ? stats.numberOfTilesSelected : 'undefined';
-                
-                console.log(`🎯 TILE SELECTION DEBUG: {
-                    selectedCount: ${selectedCount},
-                    actualSelectedTiles_length: ${actualSelectedTiles ? actualSelectedTiles.length : 'undefined'},
-                    statistics_numberOfTilesSelected: ${numberOfTilesSelected},
-                    ready: ${readyState}
-                }`);
+            const selectedCount = (this.cesiumTileset as any)._selectedTiles?.length || 0;
+            // Minimal tile selection debugging - only when needed
+            if (selectedCount > 0) {
+                console.log(`🎯 TILES SELECTED: ${selectedCount} tiles ready for rendering`);
             }
             
             // Update frame tracking for next frame
@@ -923,7 +1074,7 @@ export class SimpleIntegration {
         
         const indent = '  '.repeat(depth);
         const contentType = tile._content?.constructor?.name || 'none';
-        const isSelected = this.cesiumTileset?.selectedTiles?.includes(tile) || false;
+        const isSelected = (this.cesiumTileset as any)?._selectedTiles?.includes(tile) || false;
         
         console.log(`${indent}📦 Depth ${depth}: geomError=${tile.geometricError}, ` +
                    `children=${tile.children?.length || 0}, content=${contentType}, ` +
@@ -959,7 +1110,7 @@ export class SimpleIntegration {
     getStats(): any {
         if (!this.cesiumTileset) return null;
         return {
-            selectedTiles: this.cesiumTileset.selectedTiles?.length || 0,
+            selectedTiles: (this.cesiumTileset as any)._selectedTiles?.length || 0,
             ready: !!(this.cesiumTileset.root && this.cesiumTileset.asset)
         };
     }
@@ -1415,7 +1566,7 @@ export class SimpleIntegration {
         if (!this.cesiumTileset) return;
         
         // Check selected tiles for parent-child overlap
-        const selectedTiles = this.cesiumTileset.selectedTiles || [];
+        const selectedTiles = (this.cesiumTileset as any)._selectedTiles || [];
         const stats = this.cesiumTileset.statistics;
         
         if (selectedTiles.length > 0) {
@@ -1781,7 +1932,7 @@ export class SimpleIntegration {
         
         // Get all loaded/ready tiles and their geographic bounds
         const allTiles = this.getAllTilesWithContent();
-        const selectedTiles = this.cesiumTileset.selectedTiles || [];
+        const selectedTiles = (this.cesiumTileset as any)._selectedTiles || [];
         const nycBounds = { latMin: 40.0, latMax: 41.0, lonMin: -75.0, lonMax: -73.0 }; // Approximate NYC area
         
         console.log(`   Total tiles with content: ${allTiles.length}`);

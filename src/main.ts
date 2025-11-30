@@ -120,7 +120,7 @@ window.addEventListener('DOMContentLoaded', async () => {
             const libertyLat = 40.6892 * Math.PI / 180;
             const libertyLon = -74.0445 * Math.PI / 180;
             const surfaceAltitude = 0; // Sea level
-            const cameraAltitude = 10000; // 10km above surface - test original working coordinates
+            const cameraAltitude = 15000; // 15km above surface - proper altitude to avoid zero distance issues with large tiles
             
             console.log('📐 COORDINATE SETUP:', {
                 latDegrees: 40.6892,
@@ -171,7 +171,7 @@ window.addEventListener('DOMContentLoaded', async () => {
             
             // Camera positioned and targeted at NYC
             
-            // Add keyboard controls for camera speed (1-9 keys)
+            // Add keyboard controls for camera speed (1-9 keys) and mesh toggle (0 key)
             window.addEventListener('keydown', (event) => {
                 const key = event.key;
                 if (key >= '1' && key <= '9') {
@@ -179,6 +179,27 @@ window.addEventListener('DOMContentLoaded', async () => {
                     currentSpeedLevel = speedLevel;
                     camera.speed = cameraSpeedLevels[currentSpeedLevel];
                     // Camera speed changed
+                } else if (key === '0') {
+                    // Toggle all mesh visibility
+                    let totalMeshes = 0;
+                    let visibleMeshes = 0;
+                    
+                    scene.meshes.forEach(mesh => {
+                        if (mesh.name !== 'camera' && mesh.name !== 'earthWGS84') {
+                            totalMeshes++;
+                            if (mesh.isEnabled()) visibleMeshes++;
+                        }
+                    });
+                    
+                    const shouldShowAll = visibleMeshes < totalMeshes;
+                    
+                    scene.meshes.forEach(mesh => {
+                        if (mesh.name !== 'camera' && mesh.name !== 'earthWGS84') {
+                            mesh.setEnabled(shouldShowAll);
+                        }
+                    });
+                    
+                    console.log(`🔄 MESH TOGGLE: ${shouldShowAll ? 'SHOWING' : 'HIDING'} all ${totalMeshes} tile meshes`);
                 }
             });
             
@@ -317,6 +338,25 @@ window.addEventListener('DOMContentLoaded', async () => {
     
     window.addEventListener("resize", handleResize);
     
+    // Add right-click mesh deletion functionality
+    canvas.addEventListener('contextmenu', (event) => {
+        event.preventDefault(); // Prevent context menu
+        
+        const pickResult = scene.pick(event.clientX, event.clientY);
+        if (pickResult && pickResult.pickedMesh) {
+            const mesh = pickResult.pickedMesh;
+            console.log(`🗑️ DELETING MESH: ${mesh.name || 'unnamed'} at position ${mesh.position.toString()}`);
+            
+            // Dispose the mesh and its materials/textures
+            if (mesh.material) {
+                mesh.material.dispose();
+            }
+            mesh.dispose();
+        } else {
+            console.log('🔍 RIGHT-CLICK: No mesh found at cursor position');
+        }
+    });
+
     // Watch for canvas size changes (dev console open/close, responsive design)
     const resizeObserver = new ResizeObserver((entries) => {
         for (const entry of entries) {
