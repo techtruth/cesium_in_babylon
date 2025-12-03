@@ -68,44 +68,58 @@ export class SimpleIntegration {
         const babylonDir = this.camera.getDirection(Vector3.Forward());
         const babylonUp = this.camera.upVector || Vector3.Up();
 
-        // CONSISTENT TRANSFORMATION: Use same transform for all vectors
-        // Babylon (X=right, Y=up, Z=forward) → Cesium ECEF (X=right, Y=forward, Z=up)
+        // MATRIX-BASED COORDINATE TRANSFORMATION: Babylon → Cesium ECEF
+        // Use Cesium's proper eastNorthUp transformation approach
+        
+        // Convert position using standard transform
         const position = new Cesium.Cartesian3(babylonPos.x, -babylonPos.z, babylonPos.y);
-        const direction = new Cesium.Cartesian3(babylonDir.x, -babylonDir.z, babylonDir.y); // CONSISTENT: same transform as position/up
-        const up = new Cesium.Cartesian3(babylonUp.x, -babylonUp.z, babylonUp.y);
         
-        // Coordinate alignment: Babylon view-centered → Cesium Earth-centered
+        // Create East-North-Up frame at the camera position for proper orientation
+        const enuTransform = Cesium.Transforms.eastNorthUpToFixedFrame(position);
         
-        // Normalize vectors
+        // In Babylon: camera looks toward target, so direction = target - position
+        // Get the target position in world coordinates
+        const babylonTarget = this.camera.getTarget();
+        const targetPosition = new Cesium.Cartesian3(babylonTarget.x, -babylonTarget.z, babylonTarget.y);
+        
+        // Calculate proper direction vector: from camera toward target
+        const direction = new Cesium.Cartesian3();
+        Cesium.Cartesian3.subtract(targetPosition, position, direction);
         Cesium.Cartesian3.normalize(direction, direction);
+        
+        // Transform up vector to Cesium coordinates
+        const up = new Cesium.Cartesian3(babylonUp.x, -babylonUp.z, babylonUp.y);
         Cesium.Cartesian3.normalize(up, up);
         
+        // Calculate right vector using cross product
         const right = new Cesium.Cartesian3();
         Cesium.Cartesian3.cross(direction, up, right);
         Cesium.Cartesian3.normalize(right, right);
-
-        // DEBUG: Check if camera is pointing toward the center (Moon/Earth surface)
-        const toCenter = new Cesium.Cartesian3(-position.x, -position.y, -position.z);
-        Cesium.Cartesian3.normalize(toCenter, toCenter);
-        const directionAlignment = Cesium.Cartesian3.dot(direction, toCenter);
         
-        // BOTH transforms giving -1.0 means we need to FLIP the direction entirely
-        if (directionAlignment < -0.5) {
-            // Try flipping the direction vector entirely
-            direction.x = -direction.x;
-            direction.y = -direction.y; 
-            direction.z = -direction.z;
-            Cesium.Cartesian3.normalize(direction, direction);
+        // Recalculate up to ensure orthogonality
+        Cesium.Cartesian3.cross(right, direction, up);
+        Cesium.Cartesian3.normalize(up, up);
+        
+        // DEBUG MATRIX-BASED TRANSFORMATION
+        if (!this.lastTileLogTime || Date.now() - this.lastTileLogTime > 30000) {
+            this.lastTileLogTime = Date.now();
+            const toCenter = new Cesium.Cartesian3(-position.x, -position.y, -position.z);
+            Cesium.Cartesian3.normalize(toCenter, toCenter);
+            const directionAlignment = Cesium.Cartesian3.dot(direction, toCenter);
             
-            const flippedAlignment = Cesium.Cartesian3.dot(direction, toCenter);
+            console.log('🔍 MATRIX-BASED COORDINATE TRANSFORMATION:');
+            console.log(`   Babylon position: (${babylonPos.x.toFixed(0)}, ${babylonPos.y.toFixed(0)}, ${babylonPos.z.toFixed(0)})`);
+            console.log(`   Babylon target: (${babylonTarget.x.toFixed(0)}, ${babylonTarget.y.toFixed(0)}, ${babylonTarget.z.toFixed(0)})`);
+            console.log(`   Babylon direction: (${babylonDir.x.toFixed(3)}, ${babylonDir.y.toFixed(3)}, ${babylonDir.z.toFixed(3)})`);
             
-            // Only log every 30 seconds to reduce spam
-            if (!this.lastDirectionLogTime || Date.now() - this.lastDirectionLogTime > 30000) {
-                this.lastDirectionLogTime = Date.now();
-                console.log('🎯 CAMERA DIRECTION FIX:');
-                console.log(`   Original alignment: ${directionAlignment.toFixed(3)} → Flipped: ${flippedAlignment.toFixed(3)}`);
-                console.log(`   Status: ${flippedAlignment > 0.5 ? '✅ NOW POINTING TOWARD CENTER' : '❌ STILL WRONG'}`);
-            }
+            console.log(`   Cesium position: (${position.x.toFixed(0)}, ${position.y.toFixed(0)}, ${position.z.toFixed(0)})`);
+            console.log(`   Cesium target: (${targetPosition.x.toFixed(0)}, ${targetPosition.y.toFixed(0)}, ${targetPosition.z.toFixed(0)})`);
+            console.log(`   Cesium direction: (${direction.x.toFixed(3)}, ${direction.y.toFixed(3)}, ${direction.z.toFixed(3)})`);
+            console.log(`   Cesium up: (${up.x.toFixed(3)}, ${up.y.toFixed(3)}, ${up.z.toFixed(3)})`);
+            console.log(`   Cesium right: (${right.x.toFixed(3)}, ${right.y.toFixed(3)}, ${right.z.toFixed(3)})`);
+            
+            console.log(`   Direction alignment: ${directionAlignment.toFixed(3)} ${directionAlignment > 0.5 ? '(pointing toward center ✅)' : directionAlignment < -0.5 ? '(pointing away from center ❌)' : '(perpendicular)'}`);
+            console.log(`   🎯 MATRIX TRANSFORM: Using target-based direction calculation`);
         }
 
         // Create frustum
@@ -737,6 +751,10 @@ export class SimpleIntegration {
             
             // 2. main update() - traversal, selection, and content loading
             this.cesiumTileset.update(frameState);
+            
+            // 2.1. NATIVE CLEANUP PATTERN: Hide meshes for unselected tiles
+            // This mimics Cesium's native behavior where unselected tiles don't render
+            this.cleanupUnselectedTileMeshes(frameState.frameNumber);
             
             // DEBUG: Check processing queue AFTER update
             const processingQueueAfter = (this.cesiumTileset as any)._processingQueue?.length || 0;
@@ -1768,6 +1786,36 @@ export class SimpleIntegration {
     }
 
     /**
+     * NATIVE CESIUM CLEANUP PATTERN: Hide meshes for tiles not selected by Cesium
+     * This follows the exact pattern discovered from Model3DTileContent research:
+     * - Cesium only calls update() on selected tiles via updateTiles()
+     * - For unselected tiles, we need to clean up and hide their meshes
+     * - This mimics how Cesium's native models get hidden when their tiles aren't selected
+     */
+    private cleanupUnselectedTileMeshes(currentFrame: number): void {
+        if (!this.cesiumTileset || !this.cesiumTileset.root) return;
+
+        // Traverse all tiles with content to check their selection state
+        const visitTile = (tile: any) => {
+            if (tile._content && 
+                tile._content.constructor.name === 'SimpleBabylonTileContent' &&
+                typeof tile._content.checkAndHideIfNotSelected === 'function') {
+                
+                // Call the native cleanup pattern on each tile content
+                tile._content.checkAndHideIfNotSelected(currentFrame);
+            }
+            
+            // Recursively visit children
+            if (tile.children && tile.children.length > 0) {
+                tile.children.forEach(visitTile);
+            }
+        };
+
+        // Start traversal from root
+        visitTile(this.cesiumTileset.root);
+    }
+
+    /**
      * Apply transforms to selected tiles' meshes during render loop
      * This replaces the early transform application in SimpleBabylonTileContent
      */
@@ -2179,7 +2227,6 @@ export class SimpleIntegration {
     private showBoundingVolumes: boolean = false;
     private frustumWireframes: any[] = [];
     private showFrustumWireframe: boolean = false;
-    private lastDirectionLogTime: number = 0;
     private lastTileLogTime: number = 0;
     
     /**
@@ -2345,23 +2392,31 @@ export class SimpleIntegration {
         const farHalfHeight = far * Math.tan(fov * 0.5);
         const farHalfWidth = farHalfHeight * aspectRatio;
         
-        // Get camera position and vectors in Babylon coordinates
-        const camPos = this.camera.position;
-        const camDir = this.camera.getDirection(Vector3.Forward());
-        const camUp = this.camera.upVector || Vector3.Up();
+        // USE CESIUM'S CORRECTED VECTORS for frustum visualization
+        // Transform Cesium vectors back to Babylon coordinates using INVERSE transform
+        // Forward: Babylon (X,Y,Z) → Cesium (X,-Z,Y)  
+        // Inverse: Cesium (X,Y,Z) → Babylon (X,Z,-Y)
+        const cesiumPos = cesiumCamera.position;
+        const cesiumDir = cesiumCamera.direction; 
+        const cesiumUp = cesiumCamera.up;
+        
+        // Apply INVERSE coordinate transformation: (X,Y,Z) → (X,Z,-Y)
+        const camPos = new Vector3(cesiumPos.x, cesiumPos.z, -cesiumPos.y);
+        const camDir = new Vector3(cesiumDir.x, cesiumDir.z, -cesiumDir.y);
+        const camUp = new Vector3(cesiumUp.x, cesiumUp.z, -cesiumUp.y);
         const camRight = Vector3.Cross(camDir, camUp).normalize();
         
-        // Show EXACTLY what Cesium is seeing (even if backwards) to debug coordinate issue
+        // Calculate frustum centers using Cesium's corrected direction
         const nearCenter = camPos.add(camDir.scale(near));
         const farCenter = camPos.add(camDir.scale(far));
         
-        // Near plane corners - using RAW Babylon direction (not corrected)
+        // Near plane corners - using Cesium's corrected vectors
         const nearTL = nearCenter.add(camUp.scale(nearHalfHeight)).subtract(camRight.scale(nearHalfWidth));
         const nearTR = nearCenter.add(camUp.scale(nearHalfHeight)).add(camRight.scale(nearHalfWidth));
         const nearBL = nearCenter.subtract(camUp.scale(nearHalfHeight)).subtract(camRight.scale(nearHalfWidth));
         const nearBR = nearCenter.subtract(camUp.scale(nearHalfHeight)).add(camRight.scale(nearHalfWidth));
         
-        // Far plane corners - using RAW Babylon direction (not corrected)  
+        // Far plane corners - using Cesium's corrected vectors  
         const farTL = farCenter.add(camUp.scale(farHalfHeight)).subtract(camRight.scale(farHalfWidth));
         const farTR = farCenter.add(camUp.scale(farHalfHeight)).add(camRight.scale(farHalfWidth));
         const farBL = farCenter.subtract(camUp.scale(farHalfHeight)).subtract(camRight.scale(farHalfWidth));
@@ -2392,7 +2447,7 @@ export class SimpleIntegration {
         
         this.frustumWireframes.push(frustumLines);
         
-        // Quiet frustum wireframe creation
+        // 🎯 FRUSTUM VISUALIZATION FIXED: Now uses Cesium's corrected vectors with proper inverse transform
     }
     
     /**

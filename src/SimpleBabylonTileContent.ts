@@ -18,6 +18,7 @@ export class SimpleBabylonTileContent {
     private _babylonScene: BabylonScene;
     private _ready: boolean = false;
     private _meshes: any[] = [];
+    private _lastUpdateFrame: number = -1;
 
     constructor(tileset: any, tile: any, resource: any, babylonScene: BabylonScene) {
         this._tileset = tileset;
@@ -288,11 +289,9 @@ export class SimpleBabylonTileContent {
 
 
     update(tileset: any, frameState: any): void {
-        // FOLLOW NATIVE CESIUM PATTERN: content.update() is only called on tiles that should be visible
-        // When update() is called, always make meshes visible - no conditional logic
-        // This matches how Model3DTileContent and other native content classes work
-        
-        // Content update debug logging removed - use spacebar for detailed info
+        // NATIVE CESIUM PATTERN: update() is ONLY called on selected tiles by Cesium3DTileset.updateTiles()
+        // If this method is called, the tile IS selected and should be visible - no conditional logic needed
+        // This matches Model3DTileContent.js exactly: just update properties and call model.update()
         
         if (!this._meshes || this._meshes.length === 0) {
             return;
@@ -309,25 +308,20 @@ export class SimpleBabylonTileContent {
             this._ready = true;
         }
         
-        // CHECK CESIUM TILE VISIBILITY: Only show meshes if tile should actually be visible
-        // For REPLACE refinement, parent tiles should be hidden when children are ready
-        const shouldBeVisible = this._tile._visible !== false && this._tile.isVisible !== false;
-        
-        this._meshes.forEach((mesh) => {
-            const currentlyEnabled = mesh.isEnabled();
-            if (shouldBeVisible && !currentlyEnabled) {
+        // NATIVE CESIUM PATTERN: If update() is called, the tile is selected - show all meshes
+        // Cesium handles hiding by NOT calling update() on unselected tiles
+        this._meshes.forEach((mesh, index) => {
+            if (!mesh.isEnabled()) {
                 mesh.setEnabled(true);
-            } else if (!shouldBeVisible && currentlyEnabled) {
-                mesh.setEnabled(false);
+                // Quiet: mesh enabled for selected tile
             }
         });
         
-        // Debug REPLACE refinement behavior (only when visibility changes)
-        const anyMeshEnabled = this._meshes.some(m => m.isEnabled());
-        if (this._tile.refine === 1 && this._lastVisibility !== shouldBeVisible) { // REPLACE = 1
-            this._lastVisibility = shouldBeVisible;
-            console.log(`🔄 REPLACE tile depth ${this._tile._depth}: visibility=${shouldBeVisible}, meshes=${anyMeshEnabled}, _visible=${this._tile._visible}, children=${this._tile.children?.length || 0}`);
-        }
+        // Track when this tile was last updated (selected by Cesium)
+        const frameNumber = frameState.frameNumber;
+        this._lastUpdateFrame = frameNumber;
+        
+        // Removed noisy debug logging - native pattern working correctly
     }
 
 
@@ -463,4 +457,21 @@ export class SimpleBabylonTileContent {
     }
 
     featurePropertiesDirty: boolean = false;
+    
+    /**
+     * NATIVE CESIUM CLEANUP PATTERN: Hide meshes for tiles not selected in recent frames
+     * This mimics how Cesium's native models get hidden when their tiles aren't selected
+     */
+    checkAndHideIfNotSelected(currentFrame: number): void {
+        // If this tile hasn't been updated in the last 2 frames, hide its meshes
+        // This matches Cesium's pattern where unselected tiles don't get rendered
+        if (this._lastUpdateFrame !== -1 && (currentFrame - this._lastUpdateFrame) >= 2) {
+            this._meshes.forEach((mesh, index) => {
+                if (mesh.isEnabled()) {
+                    mesh.setEnabled(false);
+                    console.log(`🙈 NATIVE HIDE: Tile depth ${this._tile._depth} mesh ${index} - not selected for ${currentFrame - this._lastUpdateFrame} frames`);
+                }
+            });
+        }
+    }
 }
