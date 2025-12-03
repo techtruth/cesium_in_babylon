@@ -1,5 +1,6 @@
-import { Camera, Engine, Vector3, Matrix, MeshBuilder, StandardMaterial, Color3, Scene } from '@babylonjs/core';
+import { Camera, Engine, Vector3, Matrix, MeshBuilder, StandardMaterial, Color3, Scene, Mesh } from '@babylonjs/core';
 import * as Cesium from 'cesium';
+import { Math as CesiumMath } from '@cesium/engine';
 import CesiumTilesetDerived from './cesium_derived/CesiumTilesetDerived.js';
 import { SimpleBabylonTileContent } from './SimpleBabylonTileContent';
 
@@ -9,6 +10,7 @@ import { SimpleBabylonTileContent } from './SimpleBabylonTileContent';
 export class SimpleIntegration {
     private camera: Camera;
     private engine: Engine;
+    private babylonScene: any;
     private cesiumTileset?: CesiumTilesetDerived;
     private renderTilesetPassState: any;
     private frameCount: number = 0;
@@ -16,13 +18,14 @@ export class SimpleIntegration {
     // private lastDynamicSSELogTime: number = 0; // Unused for now
     private testedDirectFetch: boolean = false;
 
-    constructor(_scene: any, camera: Camera, engine: Engine) {
+    constructor(babylonScene: any, camera: Camera, engine: Engine) {
         this.camera = camera;
         this.engine = engine;
+        this.babylonScene = babylonScene;
         
         // Set up Cesium Ion authentication using native Cesium
         // TODO: Update with your new Cesium Ion token from https://cesium.com/ion/tokens
-        Cesium.Ion.defaultAccessToken = 'YOUR_NEW_CESIUM_ION_TOKEN_HERE';
+        Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI4ZWNjOTdkOS03ODQ2LTRiYzAtOGNiZC0yMmUwY2ZiOTM2M2MiLCJpZCI6MjIwODczLCJpYXQiOjE3NjQ2OTMxODh9.QlACQnWP4oWZCFQKuR2FXWw_KiLJwm9wsg6U6ynqIw4';
         
         // BABYLON.JS: Set up proper Cesium content factory registration
         this.setupBabylonContentFactory();
@@ -40,7 +43,9 @@ export class SimpleIntegration {
         
         this.renderTilesetPassState = new Cesium3DTilePassState({
             pass: Cesium3DTilePass.RENDER,
-            commandList: [] // Required by CesiumTilesetDerived.js
+            commandList: [], // Required by CesiumTilesetDerived.js
+            camera: null, // Will be set during update
+            cullingVolume: null // Will be set during update  
         });
     }
 
@@ -63,9 +68,10 @@ export class SimpleIntegration {
         const babylonDir = this.camera.getDirection(Vector3.Forward());
         const babylonUp = this.camera.upVector || Vector3.Up();
 
-        // Transform Babylon to Cesium: (X, Y, Z) → (X, -Z, Y) - inverse coordinate alignment
+        // CONSISTENT TRANSFORMATION: Use same transform for all vectors
+        // Babylon (X=right, Y=up, Z=forward) → Cesium ECEF (X=right, Y=forward, Z=up)
         const position = new Cesium.Cartesian3(babylonPos.x, -babylonPos.z, babylonPos.y);
-        const direction = new Cesium.Cartesian3(babylonDir.x, -babylonDir.z, babylonDir.y);
+        const direction = new Cesium.Cartesian3(babylonDir.x, -babylonDir.z, babylonDir.y); // CONSISTENT: same transform as position/up
         const up = new Cesium.Cartesian3(babylonUp.x, -babylonUp.z, babylonUp.y);
         
         // Coordinate alignment: Babylon view-centered → Cesium Earth-centered
@@ -78,14 +84,37 @@ export class SimpleIntegration {
         Cesium.Cartesian3.cross(direction, up, right);
         Cesium.Cartesian3.normalize(right, right);
 
+        // DEBUG: Check if camera is pointing toward the center (Moon/Earth surface)
+        const toCenter = new Cesium.Cartesian3(-position.x, -position.y, -position.z);
+        Cesium.Cartesian3.normalize(toCenter, toCenter);
+        const directionAlignment = Cesium.Cartesian3.dot(direction, toCenter);
+        
+        // BOTH transforms giving -1.0 means we need to FLIP the direction entirely
+        if (directionAlignment < -0.5) {
+            // Try flipping the direction vector entirely
+            direction.x = -direction.x;
+            direction.y = -direction.y; 
+            direction.z = -direction.z;
+            Cesium.Cartesian3.normalize(direction, direction);
+            
+            const flippedAlignment = Cesium.Cartesian3.dot(direction, toCenter);
+            
+            // Only log every 30 seconds to reduce spam
+            if (!this.lastDirectionLogTime || Date.now() - this.lastDirectionLogTime > 30000) {
+                this.lastDirectionLogTime = Date.now();
+                console.log('🎯 CAMERA DIRECTION FIX:');
+                console.log(`   Original alignment: ${directionAlignment.toFixed(3)} → Flipped: ${flippedAlignment.toFixed(3)}`);
+                console.log(`   Status: ${flippedAlignment > 0.5 ? '✅ NOW POINTING TOWARD CENTER' : '❌ STILL WRONG'}`);
+            }
+        }
+
         // Create frustum
-        // CRITICAL FIX: Use proper near plane value for geographic rendering
-        // Camera.minZ of 1000 was causing massive SSE values that break REPLACE refinement
-        // Geographic tilesets need near plane around 0.1-1.0, not 1000
+        // FIXED: Use camera's actual minZ value for consistency
+        // Both main camera and integration now use 0.1
         const frustum = new Cesium.PerspectiveFrustum({
             fov: this.camera.fov,
             aspectRatio: this.engine.getRenderWidth() / this.engine.getRenderHeight(),
-            near: 0.1, // Fixed: was this.camera.minZ (1000), now proper value for geographic rendering
+            near: this.camera.minZ, // Now consistent: both use 0.1
             far: this.camera.maxZ
         });
 
@@ -144,39 +173,22 @@ export class SimpleIntegration {
             // Use Cesium's standard approach exactly - but with our derived tileset
             const resource = await Cesium.IonResource.fromAssetId(assetId);
             
-            // OFFICIAL CESIUM GOOGLE 3D TILES CONFIG: Match createGooglePhotorealistic3DTileset exactly
-            console.log('🎯 Using complete Google 3D Tiles config from working commit 1012957');
+            // NATIVE CESIUM GOOGLE 3D TILES CONFIG: Match createGooglePhotorealistic3DTileset exactly
+            console.log('🎯 Using native Cesium config - trusting dynamic SSE system');
             this.cesiumTileset = await CesiumTilesetDerived.fromUrl(resource, {
-                // OFFICIAL: From createGooglePhotorealistic3DTileset.js
+                // ONLY settings that createGooglePhotorealistic3DTileset actually sets:
                 cacheBytes: 1536 * 1024 * 1024,              // 1.5GB (Google-optimized)
                 maximumCacheOverflowBytes: 1024 * 1024 * 1024, // 1GB (Google-optimized)
                 enableCollision: true,                        // Official Google config
                 
-                // OFFICIAL: Cesium3DTileset defaults (confirmed from source)
-                maximumScreenSpaceError: 8,                   // Lower for more detail 
-                skipLevelOfDetail: true,                      // Enable aggressive LOD for deeper traversal
-                baseScreenSpaceError: 512,                    // Lower base SSE
-                skipScreenSpaceErrorFactor: 8,                // Lower skip factor  
-                skipLevels: 0,                                // Don't skip any levels
-                immediatelyLoadDesiredLevelOfDetail: true,    // Load desired detail immediately
-                loadSiblings: true,                           // Load sibling tiles for better coverage
+                // All other settings use Cesium defaults (including dynamic SSE system):
+                // - maximumScreenSpaceError: 16 (default, not 8)
+                // - skipLevelOfDetail: false (default, not true) 
+                // - dynamicScreenSpaceError: true (default - adaptive refinement)
+                // - dynamicScreenSpaceErrorDensity: 2.0e-4 (default)
+                // - dynamicScreenSpaceErrorFactor: 24.0 (default)
+                // - All other optimization settings use Cesium defaults
                 
-                // STANDARD: Keep other working optimizations
-                cullWithChildrenBounds: true,
-                cullRequestsWhileMoving: true,                // Official default
-                cullRequestsWhileMovingMultiplier: 60.0,
-                preloadWhenHidden: false,
-                preloadFlightDestinations: true,
-                preferLeaves: false,
-                dynamicScreenSpaceError: true,                // Official default (re-enabled)
-                dynamicScreenSpaceErrorDensity: 2.0e-4,
-                dynamicScreenSpaceErrorFactor: 24.0,
-                dynamicScreenSpaceErrorHeightFalloff: 0.25,
-                progressiveResolutionHeightFraction: 0.3,
-                foveatedScreenSpaceError: true,
-                foveatedConeSize: 0.1,
-                foveatedMinimumScreenSpaceErrorRelaxation: 0.0,
-                foveatedTimeDelay: 0.2,
                 show: true,
                 shadows: 1  // ShadowMode.ENABLED
             }) as CesiumTilesetDerived;
@@ -195,6 +207,35 @@ export class SimpleIntegration {
             
         } catch (error) {
             console.error('Failed to load Google Photorealistic 3D Tiles:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Load any Cesium Ion asset with default tileset configuration
+     */
+    async loadCesiumIonAsset(assetId: number, description: string = 'Cesium Ion Asset'): Promise<void> {
+        try {
+            // Use standard Cesium Ion asset loading
+            const resource = await Cesium.IonResource.fromAssetId(assetId);
+            
+            console.log(`🎯 Loading ${description} (Asset ID: ${assetId})`);
+            this.cesiumTileset = await CesiumTilesetDerived.fromUrl(resource, {
+                // Use Cesium defaults for all settings
+                show: true,
+                shadows: 1  // ShadowMode.ENABLED
+            }) as CesiumTilesetDerived;
+            
+            // Wait for the tileset to be fully ready
+            await this.cesiumTileset.readyPromise;
+            
+            console.log(`${description} ready!`);
+            
+            // Observe natural tile state
+            this.observeRootTileState();
+            
+        } catch (error) {
+            console.error(`Failed to load ${description}:`, error);
             throw error;
         }
     }
@@ -221,6 +262,15 @@ export class SimpleIntegration {
             return; // Silent initialization
         }
 
+        // Check if camera updates are paused (spacebar control)
+        if (this.cameraUpdatePaused && !this.forceOneUpdate) {
+            return; // Skip update when paused
+        }
+        
+        if (this.forceOneUpdate) {
+            this.forceOneUpdate = false; // Reset force flag
+        }
+
         // REMOVED: No longer forcing hasRenderableContent - using proper empty content detection
 
         // WORKING COMMIT PATTERN: Use createCesiumCamera() method like working commit 1012957
@@ -242,17 +292,7 @@ export class SimpleIntegration {
             }
             
             // DEBUG: Log culling volume properties for analysis
-            if (this.frameCount % 180 === 0) {
-                console.log('🔍 CULLING VOLUME DEBUG:', {
-                    hasCullingVolume: !!cullingVolume,
-                    hasComputeVisibility: typeof cullingVolume.computeVisibilityWithPlaneMask === 'function',
-                    cullingVolumeType: cullingVolume.constructor?.name || 'unknown',
-                    frustumType: camera.frustum.constructor?.name || 'unknown',
-                    frustumNear: camera.frustum.near,
-                    frustumFar: camera.frustum.far,
-                    frustumFov: (camera.frustum.fov * 180 / Math.PI).toFixed(1) + '°'
-                });
-            }
+            // Removed frequent culling volume debug logging
         } catch (error) {
             console.error('❌ Failed to compute culling volume:', error);
             console.error('   This will break tile visibility - stopping update');
@@ -261,6 +301,10 @@ export class SimpleIntegration {
 
         // VISUALIZE CESIUM FRUSTUM: Create visual markers in Babylon coordinate space  
         this.visualizeCesiumFrustum(camera, camera.frustum);
+
+        // Update pass state with current camera and culling volume
+        this.renderTilesetPassState.camera = camera;
+        this.renderTilesetPassState.cullingVolume = cullingVolume;
 
         // Complete frameState matching working commit 72dfb2e, using Cesium's default SSE
         const frameState = {
@@ -303,17 +347,11 @@ export class SimpleIntegration {
         // WORKAROUND: Access internal _selectedTiles since public getter is missing
         const selectedCount = (this.cesiumTileset as any)._selectedTiles?.length || 0;
         
-        // DEBUG SSE ISSUE: Log camera values to understand SSE calculation problem
-        if (this.frameCount % 300 === 0 && selectedCount > 0) {
-            const camera = this.createCesiumCamera();
-            console.log(`🔧 SSE DEBUG - Camera values that affect SSE calculation:`);
-            console.log(`   Position magnitude: ${Math.sqrt(camera.position.x*camera.position.x + camera.position.y*camera.position.y + camera.position.z*camera.position.z).toFixed(2)}`);
-            console.log(`   Near: ${camera.frustum.near}, Far: ${camera.frustum.far}, FOV: ${(camera.frustum.fov * 180/Math.PI).toFixed(1)}°`);
-            console.log(`   Camera distance from Earth: ${this.calculateCameraDistanceFromEarth().toFixed(2)}m`);
-        }
+        // DEBUG SSE ISSUE: Log camera values to understand SSE calculation problem (reduced frequency)
+        // SSE debug logging removed - use spacebar to get detailed camera info
         
-        // Simple 5-second reporting for debugging REPLACE refinement  
-        if (this.frameCount % 300 === 0) {
+        // REPLACE refinement debugging (reduced frequency)
+        if (this.frameCount % 1800 === 0) {
             // Get more detailed tile info to understand depth issue
             const selectedTiles = (this.cesiumTileset as any)._selectedTiles || [];
             const depths = selectedTiles.map((t: any) => t._depth);
@@ -331,9 +369,13 @@ export class SimpleIntegration {
             const replaceTiles = refinementAnalysis.filter(t => t.refine === 'REPLACE');
             const addTiles = refinementAnalysis.filter(t => t.refine === 'ADD');
             
-            console.log(`📊 Selected tiles: ${selectedCount} | Depths: [${depths.join(', ')}] | Range: ${minDepth}-${maxDepth}`);
-            console.log(`   REPLACE tiles: ${replaceTiles.length}, ADD tiles: ${addTiles.length}`);
-            console.log(`   Camera altitude: ${this.calculateCameraDistanceFromEarth().toFixed(0)}m | Stats: visited=${this.cesiumTileset.statistics.visited}`);
+            // Only log every 30 seconds to reduce spam
+            if (!this.lastTileLogTime || Date.now() - this.lastTileLogTime > 30000) {
+                this.lastTileLogTime = Date.now();
+                console.log(`📊 Selected tiles: ${selectedCount} | Depths: [${depths.join(', ')}] | Range: ${minDepth}-${maxDepth}`);
+                console.log(`   REPLACE tiles: ${replaceTiles.length}, ADD tiles: ${addTiles.length}`);
+                console.log(`   Camera altitude: ${this.calculateCameraDistanceFromEarth().toFixed(0)}m | Stats: visited=${this.cesiumTileset.statistics.visited}`);
+            }
             
             // Log potential REPLACE refinement issues
             const replaceWithChildren = refinementAnalysis.filter(t => t.refine === 'REPLACE' && t.hasChildren);
@@ -357,14 +399,71 @@ export class SimpleIntegration {
                         
                         if (readyChildren.length > 0 || availableChildren.length > 0) {
                             console.log(`   🚨 SELECTION ALGORITHM ISSUE: depth ${selectedTile._depth} selected but children ready`);
-                            console.log(`      Parent SSE: ${selectedTile._screenSpaceError?.toFixed(2) || 'undefined'}, refine: ${selectedTile.refine === 1 ? 'REPLACE' : 'ADD'}`);
+                            const parentSSE = selectedTile.getScreenSpaceError(frameState);
+                            console.log(`      Parent SSE: ${parentSSE.toFixed(2)}, refine: ${selectedTile.refine === 1 ? 'REPLACE' : 'ADD'}`);
                             console.log(`      Ready children: ${readyChildren.length}/${selectedTile.children.length}`);
                             
                             // Check if it's a screen space error issue - add detailed debug info
-                            const childSSEs = selectedTile.children.map((c: any) => c._screenSpaceError).filter((sse: any) => sse !== undefined);
+                            const childSSEs = selectedTile.children.map((c: any) => c.getScreenSpaceError(frameState)).filter((sse: any) => sse !== undefined);
                             if (childSSEs.length > 0) {
                                 const avgChildSSE = childSSEs.reduce((a: number, b: number) => a + b, 0) / childSSEs.length;
-                                console.log(`      Parent vs child SSE: ${selectedTile._screenSpaceError?.toFixed(2)} vs ${avgChildSSE.toFixed(2)} (children should have lower SSE)`);
+                                console.log(`      Parent vs child SSE: ${parentSSE.toFixed(2)} vs ${avgChildSSE.toFixed(2)} (children should have lower SSE)`);
+                                
+                                // DEBUG: Compare parent vs child SSE calculation 
+                                const firstChild = selectedTile.children[0];
+                                const childDistance = firstChild._distanceToCamera;
+                                console.log(`      🔍 PARENT vs CHILD SSE PATHS:`);
+                                console.log(`         Parent: distance=${selectedTile._distanceToCamera?.toFixed(2)}, SSE=${parentSSE.toFixed(2)}`);
+                                console.log(`         Child:  distance=${childDistance?.toFixed(2)}, SSE=${firstChild.getScreenSpaceError(frameState).toFixed(2)}`);
+                                console.log(`         Child geometricError: ${firstChild.geometricError}`);
+                                if (childDistance > 0) {
+                                    console.log(`         🎯 CHILD HAS NON-ZERO DISTANCE! This suggests children use proper distance calculation while parents don't.`);
+                                }
+                                
+                                // INVESTIGATE: Check if REPLACE refinement is actually working correctly
+                                console.log(`      🔍 REPLACE REFINEMENT VERIFICATION:`);
+                                const parentContent = selectedTile._content;
+                                const parentMeshes = parentContent?.getBabylonMeshes?.() || [];
+                                const childContent = firstChild._content;  
+                                const childMeshes = childContent?.getBabylonMeshes?.() || [];
+                                
+                                console.log(`         Parent meshes: ${parentMeshes.length} (enabled: ${parentMeshes.filter(m => m.isEnabled()).length})`);
+                                console.log(`         Child meshes: ${childMeshes.length} (enabled: ${childMeshes.filter(m => m.isEnabled()).length})`);
+                                
+                                // DEBUG: Check parent vs child content states
+                                console.log(`      🔍 PARENT CONTENT STATE DEBUG:`);
+                                console.log(`         Parent: contentReady=${selectedTile.contentReady}, hasRenderableContent=${selectedTile.hasRenderableContent}, contentAvailable=${selectedTile.contentAvailable}, contentState=${selectedTile._contentState}, content.ready=${parentContent?.ready}`);
+                                
+                                console.log(`      🔍 CESIUM TRAVERSAL DEBUG:`);
+                                const isReplace = selectedTile.refine === 1; // REPLACE = 1
+                                const parentHasRenderableContent = selectedTile.hasRenderableContent;
+                                const checkRefines = isReplace && parentHasRenderableContent;
+                                console.log(`         refine=${selectedTile.refine} (REPLACE=${isReplace}), hasRenderableContent=${parentHasRenderableContent}`);
+                                console.log(`         checkRefines = ${isReplace} && ${parentHasRenderableContent} = ${checkRefines}`);
+                                console.log(`         tile._refines=${selectedTile._refines}, parent._refines=${selectedTile.parent?._refines}`);
+                                
+                                // Check why this tile was selected
+                                const parent = selectedTile.parent;
+                                const parentRefines = !parent || parent._refines;
+                                const stoppedRefining = !selectedTile._refines && parentRefines;
+                                console.log(`         parentRefines=${parentRefines}, stoppedRefining=${stoppedRefining}`);
+                                console.log(`         SELECTED because: stoppedRefining=${stoppedRefining} (should be true for selected REPLACE tiles)`);
+                                
+                                console.log(`      🔍 CHILD CONTENT STATE DEBUG:`);
+                                selectedTile.children.forEach((child: any, i: number) => {
+                                    const content = child._content;
+                                    console.log(`         Child ${i}: contentReady=${child.contentReady}, hasRenderableContent=${child.hasRenderableContent}, contentAvailable=${child.contentAvailable}, contentState=${child._contentState}, content.ready=${content?.ready}`);
+                                    console.log(`            isVisible=${child.isVisible}, _visible=${child._visible}, _inRequestVolume=${child._inRequestVolume}, _visibilityPlaneMask=${child._visibilityPlaneMask}`);
+                                });
+                                
+                                if (parentMeshes.filter(m => m.isEnabled()).length > 0 && childMeshes.filter(m => m.isEnabled()).length > 0) {
+                                    console.log(`         🚨 BOTH PARENT AND CHILD VISIBLE - Cesium traversal issue`);
+                                    console.log(`         🔍 DEBUGGING: Need to check why Cesium selects parent tiles when children are ready`);
+                                } else if (childMeshes.filter(m => m.isEnabled()).length > 0) {
+                                    console.log(`         ✅ ONLY CHILDREN VISIBLE - Standard REPLACE refinement working`);
+                                } else {
+                                    console.log(`         ⚠️  ONLY PARENT VISIBLE - Children not selected by Cesium`);
+                                }
                                 
                                 // DEBUG SSE COMPONENTS - investigate what's causing massive SSE
                                 console.log(`      🔍 SSE DEBUG - Parent tile components:`);
@@ -372,17 +471,48 @@ export class SimpleIntegration {
                                 console.log(`         _distanceToCamera: ${selectedTile._distanceToCamera?.toFixed(2)}`);
                                 console.log(`         boundingVolume type: ${selectedTile.boundingVolume?.constructor.name}`);
                                 
-                                // Get camera frustum info
+                                // Get camera frustum info and debug SSE path
                                 const camera = this.createCesiumCamera();
                                 console.log(`         frustum.sseDenominator: ${(camera.frustum as any).sseDenominator?.toFixed(6)}`);
                                 console.log(`         frustum.fovy: ${camera.frustum.fov?.toFixed(6)} rad = ${(camera.frustum.fov * 180 / Math.PI)?.toFixed(2)}°`);
                                 
-                                // Manual SSE calculation to verify
-                                const distance = Math.max(selectedTile._distanceToCamera || 1, 0.0000001); // Cesium.Math.EPSILON7
-                                const height = 1.0; // Default height for SSE calculation
-                                const sseDenominator = (camera.frustum as any).sseDenominator || 1;
-                                const manualSSE = (selectedTile.geometricError * height) / (distance * sseDenominator);
-                                console.log(`         Manual SSE calc: (${selectedTile.geometricError} * ${height}) / (${distance.toFixed(2)} * ${sseDenominator.toFixed(6)}) = ${manualSSE.toFixed(2)}`);
+                                // DEBUG: Analyze which SSE path Cesium is taking
+                                console.log(`         🔍 FRUSTUM TYPE DEBUG:`);
+                                console.log(`            frustum.constructor.name: ${camera.frustum.constructor.name}`);
+                                console.log(`            frustum instanceof OrthographicFrustum: ${camera.frustum instanceof (Cesium as any).OrthographicFrustum}`);
+                                console.log(`            frameState.mode: ${frameState.mode} (SCENE3D=${(Cesium as any).SceneMode.SCENE3D})`);
+                                console.log(`            Expected path: ${(frameState.mode === (Cesium as any).SceneMode.SCENE2D || camera.frustum instanceof (Cesium as any).OrthographicFrustum) ? 'ORTHOGRAPHIC (no EPSILON7)' : 'PERSPECTIVE (with EPSILON7)'}`);
+                                
+                                // USE CESIUM'S ACTUAL METHOD: Call getScreenSpaceError directly instead of manual calculation
+                                const cesiumSSE = selectedTile.getScreenSpaceError(frameState);
+                                const rawDistance = selectedTile._distanceToCamera;
+                                console.log(`         CESIUM'S ACTUAL SSE: selectedTile.getScreenSpaceError(frameState) = ${cesiumSSE.toFixed(2)}`);
+                                console.log(`         Raw distance: ${rawDistance.toFixed(2)} (should be using EPSILON7 if perspective path)`);
+                                
+                                // INVESTIGATE: Check if parent bounding volumes are intentionally massive
+                                console.log(`         🌍 BOUNDING VOLUME ANALYSIS:`);
+                                const boundingVolume = selectedTile.boundingVolume;
+                                if (boundingVolume._boundingSphere) {
+                                    const sphere = boundingVolume._boundingSphere;
+                                    const radius = sphere.radius;
+                                    const center = sphere.center;
+                                    console.log(`            Bounding Sphere: radius=${(radius/1000).toFixed(0)}km, center=(${center.x.toFixed(0)}, ${center.y.toFixed(0)}, ${center.z.toFixed(0)})`);
+                                    if (radius > 1000000) { // > 1000km
+                                        console.log(`            🌍 MASSIVE BOUNDING VOLUME! Radius > 1000km suggests continental/global scale`);
+                                    }
+                                } else if (boundingVolume._orientedBoundingBox) {
+                                    const obb = boundingVolume._orientedBoundingBox;
+                                    const halfAxes = obb.halfAxes;
+                                    const maxExtent = Math.max(
+                                        Math.sqrt(halfAxes[0]*halfAxes[0] + halfAxes[1]*halfAxes[1] + halfAxes[2]*halfAxes[2]),
+                                        Math.sqrt(halfAxes[3]*halfAxes[3] + halfAxes[4]*halfAxes[4] + halfAxes[5]*halfAxes[5]),
+                                        Math.sqrt(halfAxes[6]*halfAxes[6] + halfAxes[7]*halfAxes[7] + halfAxes[8]*halfAxes[8])
+                                    );
+                                    console.log(`            Oriented Bounding Box: max extent=${(maxExtent/1000).toFixed(0)}km`);
+                                    if (maxExtent > 1000000) { // > 1000km
+                                        console.log(`            🌍 MASSIVE BOUNDING VOLUME! Extent > 1000km suggests continental/global scale`);
+                                    }
+                                }
                             }
                         }
                     }
@@ -390,8 +520,8 @@ export class SimpleIntegration {
             }
         }
         
-        // DEBUG: Focus on why selectedTiles = 0 - check traversal logic
-        if (this.frameCount % 300 === 0 && selectedCount === 0) {
+        // DEBUG: Focus on why selectedTiles = 0 - check traversal logic (reduced frequency)
+        if (this.frameCount % 1800 === 0 && selectedCount === 0) {
             const stats = this.cesiumTileset?.statistics;
             const root = this.cesiumTileset?.root;
             
@@ -613,7 +743,7 @@ export class SimpleIntegration {
             
             // DEBUG: Check if selectedTiles gets populated after update  
             const selectedAfterUpdate = (this.cesiumTileset as any)._selectedTiles?.length || 0;
-            if (this.frameCount % 900 === 0) {
+            if (this.frameCount % 1800 === 0) {
                 console.log(`🔍 POST-UPDATE: selectedTiles: ${selectedAfterUpdate}, stats.selected: ${this.cesiumTileset.statistics?.selected || 0}`);
                 
                 // DEBUG: Processing queue status
@@ -640,8 +770,18 @@ export class SimpleIntegration {
             // 4. Apply transforms to selected tiles after Cesium processing
             this.applyTransformsToSelectedTiles();
             
+            // 5. Update bounding volume wireframes if visible
+            if (this.showBoundingVolumes) {
+                this.createBoundingVolumeWireframes();
+            }
+            
+            // 6. Update frustum wireframe if visible
+            if (this.showFrustumWireframe) {
+                this.createFrustumWireframe();
+            }
+            
             // DEBUG: Check if tileset configuration is preventing tile selection
-            if (this.frameCount % 300 === 0 && (this.cesiumTileset as any)._selectedTiles.length === 0) {
+            if (this.frameCount % 1800 === 0 && (this.cesiumTileset as any)._selectedTiles.length === 0) {
                 console.log('🔧 TILESET CONFIGURATION DEBUG:', {
                     maximumScreenSpaceError: this.cesiumTileset.maximumScreenSpaceError,
                     skipLevelOfDetail: this.cesiumTileset.skipLevelOfDetail,
@@ -837,9 +977,7 @@ export class SimpleIntegration {
             // Quiet down the constant logging - only log if tiles are actually selected or every 10 seconds
             const selectedCount = (this.cesiumTileset as any)._selectedTiles?.length || 0;
             // Minimal tile selection debugging - only when needed
-            if (selectedCount > 0) {
-                console.log(`🎯 TILES SELECTED: ${selectedCount} tiles ready for rendering`);
-            }
+            // Removed frequent tile selection logging
             
             // Update frame tracking for next frame
             this.lastFrameNumber = this.frameCount;
@@ -2023,10 +2161,344 @@ export class SimpleIntegration {
         }
         
         // Debug tile collection
-        if (this.frameCount % 180 === 0) {
+        // Reduced tile collection logging frequency
+        if (this.frameCount % 1800 === 0) {
             console.log(`🔍 TILE COLLECTION: Found ${tilesWithContent.length} ready tiles out of ${totalTilesChecked} total checked`);
         }
         
         return tilesWithContent;
+    }
+
+    // ========================================
+    // INTERACTIVE DEBUG CONTROLS
+    // ========================================
+    
+    private cameraUpdatePaused: boolean = false;
+    private lastBabylonCameraState: any = null;
+    private boundingVolumeWireframes: any[] = [];
+    private showBoundingVolumes: boolean = false;
+    private frustumWireframes: any[] = [];
+    private showFrustumWireframe: boolean = false;
+    private lastDirectionLogTime: number = 0;
+    private lastTileLogTime: number = 0;
+    
+    /**
+     * Step camera update - spacebar control
+     * Pauses continuous updates and steps one frame at a time
+     */
+    stepCameraUpdate(): void {
+        if (!this.cameraUpdatePaused) {
+            // First spacebar press - pause and capture current state
+            this.cameraUpdatePaused = true;
+            this.lastBabylonCameraState = {
+                position: this.camera.position.clone(),
+                target: this.camera.getTarget().clone(),
+                fov: this.camera.fov
+            };
+            console.log('⏸️ CAMERA UPDATE PAUSED - Press spacebar to step');
+            return;
+        }
+        
+        // Subsequent spacebar presses - step one update
+        console.log('👣 STEPPING CAMERA UPDATE');
+        this.logCameraDebug();
+        
+        // Force one update cycle
+        this.forceOneUpdate = true;
+    }
+    
+    private forceOneUpdate: boolean = false;
+    
+    /**
+     * Toggle bounding volume visibility - B key control
+     */
+    toggleBoundingVolumes(): void {
+        if (!this.cesiumTileset) {
+            console.log('❌ No tileset loaded');
+            return;
+        }
+        
+        this.showBoundingVolumes = !this.showBoundingVolumes;
+        
+        if (this.showBoundingVolumes) {
+            console.log('🔳 BOUNDING VOLUMES: VISIBLE (Babylon.js wireframes)');
+            this.createBoundingVolumeWireframes();
+        } else {
+            console.log('🔳 BOUNDING VOLUMES: HIDDEN');
+            this.clearBoundingVolumeWireframes();
+        }
+    }
+    
+    /**
+     * Create Babylon.js wireframe spheres for tile bounding volumes
+     */
+    private createBoundingVolumeWireframes(): void {
+        this.clearBoundingVolumeWireframes();
+        
+        const selectedTiles = (this.cesiumTileset as any)?._selectedTiles || [];
+        console.log(`🔧 Creating bounding volume wireframes for ${selectedTiles.length} selected tiles`);
+        
+        // Coordinate system verified! Now focus on tile bounding volumes
+        
+        selectedTiles.forEach((tile: any, index: number) => {
+            const boundingVolume = tile.boundingVolume;
+            if (!boundingVolume || !boundingVolume.boundingSphere) {
+                return;
+            }
+            
+            const sphere = boundingVolume.boundingSphere;
+            const cesiumCenter = sphere.center;
+            const cesiumRadius = sphere.radius;
+            
+            // Use the SAME coordinate transformation as tile content positioning
+            // This should match how SimpleBabylonTileContent positions meshes
+            const babylonCenter = new Vector3(cesiumCenter.x, cesiumCenter.z, -cesiumCenter.y);
+            
+            // DEBUG: Log coordinate conversion
+            // Coordinate debug logging removed to reduce spam
+            
+            // Just make a normal wireframe sphere - no fancy stuff
+            const wireframeSphere = MeshBuilder.CreateSphere(`boundingVolume_${index}`, {
+                diameter: cesiumRadius * 2,
+                segments: 16
+            }, this.babylonScene);
+            
+            wireframeSphere.position = babylonCenter;
+            
+            // Just make a normal material
+            const material = new StandardMaterial(`boundingMaterial_${index}`, this.babylonScene);
+            material.wireframe = true;
+            material.backFaceCulling = false;
+            
+            // Simple colors
+            const depthNormalized = Math.min(tile._depth / 10, 1);
+            material.diffuseColor = new Color3(1 - depthNormalized, 0.5, depthNormalized);
+            
+            wireframeSphere.material = material;
+            
+            // Debug logging removed for cleaner output
+            
+            this.boundingVolumeWireframes.push(wireframeSphere);
+            
+            console.log(`   [${index}] Depth ${tile._depth}: center=(${cesiumCenter.x.toFixed(0)}, ${cesiumCenter.y.toFixed(0)}, ${cesiumCenter.z.toFixed(0)}), radius=${(cesiumRadius/1000).toFixed(1)}km`);
+        });
+    }
+    
+    /**
+     * Clear all bounding volume wireframes
+     */
+    private clearBoundingVolumeWireframes(): void {
+        this.boundingVolumeWireframes.forEach(wireframe => {
+            if (wireframe.material) {
+                wireframe.material.dispose();
+            }
+            wireframe.dispose();
+        });
+        this.boundingVolumeWireframes = [];
+    }
+    
+    /**
+     * Toggle frustum wireframe visibility - F key control
+     */
+    toggleFrustumWireframe(): void {
+        if (!this.cesiumTileset) {
+            console.log('❌ No tileset loaded');
+            return;
+        }
+        
+        this.showFrustumWireframe = !this.showFrustumWireframe;
+        
+        if (this.showFrustumWireframe) {
+            console.log('🔺 FRUSTUM WIREFRAME: VISIBLE');
+            this.createFrustumWireframe();
+        } else {
+            console.log('🔺 FRUSTUM WIREFRAME: HIDDEN');
+            this.clearFrustumWireframe();
+        }
+    }
+    
+    /**
+     * Create Babylon.js wireframe for Cesium camera frustum
+     */
+    private createFrustumWireframe(): void {
+        this.clearFrustumWireframe();
+        
+        // Get the current Cesium camera
+        const cesiumCamera = this.createCesiumCamera();
+        if (!cesiumCamera) {
+            console.log('❌ Could not create Cesium camera for frustum');
+            return;
+        }
+        
+        const frustum = cesiumCamera.frustum;
+        // Quiet frustum creation
+        
+        // Calculate frustum corner points
+        const near = frustum.near;
+        const far = frustum.far;
+        const fov = frustum.fov;
+        const aspectRatio = frustum.aspectRatio;
+        
+        // Half heights and widths at near and far planes
+        const nearHalfHeight = near * Math.tan(fov * 0.5);
+        const nearHalfWidth = nearHalfHeight * aspectRatio;
+        const farHalfHeight = far * Math.tan(fov * 0.5);
+        const farHalfWidth = farHalfHeight * aspectRatio;
+        
+        // Get camera position and vectors in Babylon coordinates
+        const camPos = this.camera.position;
+        const camDir = this.camera.getDirection(Vector3.Forward());
+        const camUp = this.camera.upVector || Vector3.Up();
+        const camRight = Vector3.Cross(camDir, camUp).normalize();
+        
+        // Show EXACTLY what Cesium is seeing (even if backwards) to debug coordinate issue
+        const nearCenter = camPos.add(camDir.scale(near));
+        const farCenter = camPos.add(camDir.scale(far));
+        
+        // Near plane corners - using RAW Babylon direction (not corrected)
+        const nearTL = nearCenter.add(camUp.scale(nearHalfHeight)).subtract(camRight.scale(nearHalfWidth));
+        const nearTR = nearCenter.add(camUp.scale(nearHalfHeight)).add(camRight.scale(nearHalfWidth));
+        const nearBL = nearCenter.subtract(camUp.scale(nearHalfHeight)).subtract(camRight.scale(nearHalfWidth));
+        const nearBR = nearCenter.subtract(camUp.scale(nearHalfHeight)).add(camRight.scale(nearHalfWidth));
+        
+        // Far plane corners - using RAW Babylon direction (not corrected)  
+        const farTL = farCenter.add(camUp.scale(farHalfHeight)).subtract(camRight.scale(farHalfWidth));
+        const farTR = farCenter.add(camUp.scale(farHalfHeight)).add(camRight.scale(farHalfWidth));
+        const farBL = farCenter.subtract(camUp.scale(farHalfHeight)).subtract(camRight.scale(farHalfWidth));
+        const farBR = farCenter.subtract(camUp.scale(farHalfHeight)).add(camRight.scale(farHalfWidth));
+        
+        // Create wireframe lines
+        const points = [
+            // Near plane rectangle
+            nearTL, nearTR, nearBR, nearBL, nearTL,
+            // Lines to far plane
+            farTL, nearTL,
+            farTR, nearTR,
+            farBR, nearBR, 
+            farBL, nearBL,
+            // Far plane rectangle  
+            farTL, farTR, farBR, farBL, farTL
+        ];
+        
+        const frustumLines = MeshBuilder.CreateLines('frustumWireframe', {
+            points: points
+        }, this.babylonScene);
+        
+        // Bright magenta material
+        const material = new StandardMaterial('frustumMaterial', this.babylonScene);
+        material.emissiveColor = new Color3(1, 0, 1); // Bright magenta
+        material.disableLighting = true;
+        frustumLines.color = new Color3(1, 0, 1);
+        
+        this.frustumWireframes.push(frustumLines);
+        
+        // Quiet frustum wireframe creation
+    }
+    
+    /**
+     * Clear all frustum wireframes
+     */
+    private clearFrustumWireframe(): void {
+        this.frustumWireframes.forEach(wireframe => {
+            wireframe.dispose();
+        });
+        this.frustumWireframes = [];
+    }
+    
+    /**
+     * Log detailed camera and frustum debug information
+     */
+    private logCameraDebug(): void {
+        console.log('📐 CAMERA DEBUG:');
+        
+        // Babylon camera state
+        const babylonPos = this.camera.position;
+        const babylonTarget = this.camera.getTarget();
+        const babylonDir = babylonTarget.subtract(babylonPos).normalize();
+        
+        console.log(`   Babylon Position: (${babylonPos.x.toFixed(0)}, ${babylonPos.y.toFixed(0)}, ${babylonPos.z.toFixed(0)})`);
+        console.log(`   Babylon Target: (${babylonTarget.x.toFixed(0)}, ${babylonTarget.y.toFixed(0)}, ${babylonTarget.z.toFixed(0)})`);
+        console.log(`   Babylon Direction: (${babylonDir.x.toFixed(3)}, ${babylonDir.y.toFixed(3)}, ${babylonDir.z.toFixed(3)})`);
+        console.log(`   FOV: ${this.camera.fov.toFixed(3)} rad (${(this.camera.fov * 180 / Math.PI).toFixed(1)}°)`);
+        console.log(`   Near/Far: ${this.camera.minZ} / ${this.camera.maxZ}`);
+        
+        // DEBUG: Show what direction we SHOULD be feeding Cesium vs what we ARE feeding
+        const babylonUp = this.camera.upVector || Vector3.Up();
+        const expectedCesiumDir = new Cesium.Cartesian3(babylonDir.x, -babylonDir.z, babylonDir.y);
+        console.log(`🔍 COORDINATE TRANSFORMATION DEBUG:`);
+        console.log(`   Babylon dir: (${babylonDir.x.toFixed(3)}, ${babylonDir.y.toFixed(3)}, ${babylonDir.z.toFixed(3)})`);
+        console.log(`   Babylon up:  (${babylonUp.x.toFixed(3)}, ${babylonUp.y.toFixed(3)}, ${babylonUp.z.toFixed(3)})`);
+        
+        // Test both coordinate transformations for direction
+        const position = new Cesium.Cartesian3(babylonPos.x, -babylonPos.z, babylonPos.y);
+        const toCenter = new Cesium.Cartesian3(-position.x, -position.y, -position.z);
+        Cesium.Cartesian3.normalize(toCenter, toCenter);
+        
+        const transform1 = new Cesium.Cartesian3(babylonDir.x, -babylonDir.z, babylonDir.y); // Consistent with position/up
+        const transform2 = new Cesium.Cartesian3(babylonDir.x, babylonDir.z, -babylonDir.y); // Alternative
+        Cesium.Cartesian3.normalize(transform1, transform1);
+        Cesium.Cartesian3.normalize(transform2, transform2);
+        
+        const align1 = Cesium.Cartesian3.dot(transform1, toCenter);
+        const align2 = Cesium.Cartesian3.dot(transform2, toCenter);
+        
+        console.log(`   Transform 1 (X,-Z,Y): (${transform1.x.toFixed(3)}, ${transform1.y.toFixed(3)}, ${transform1.z.toFixed(3)}) → alignment: ${align1.toFixed(3)}`);
+        console.log(`   Transform 2 (X,Z,-Y): (${transform2.x.toFixed(3)}, ${transform2.y.toFixed(3)}, ${transform2.z.toFixed(3)}) → alignment: ${align2.toFixed(3)}`);
+        console.log(`   🎯 Better transform: ${align1 > align2 ? 'Transform 1 (consistent)' : 'Transform 2 (alternative)'} (should point toward center)`);
+        console.log(`   → Cesium dir: (${expectedCesiumDir.x.toFixed(3)}, ${expectedCesiumDir.y.toFixed(3)}, ${expectedCesiumDir.z.toFixed(3)})`);
+        
+        // Cesium camera conversion  
+        const cesiumCamera = this.createCesiumCamera();
+        console.log(`   Cesium Position: (${cesiumCamera.position.x.toFixed(0)}, ${cesiumCamera.position.y.toFixed(0)}, ${cesiumCamera.position.z.toFixed(0)})`);
+        console.log(`   Cesium Direction: (${cesiumCamera.direction.x.toFixed(3)}, ${cesiumCamera.direction.y.toFixed(3)}, ${cesiumCamera.direction.z.toFixed(3)})`);
+        
+        // Check if Cesium direction points toward Earth center (should be negative distance from camera)
+        const earthCenter = new Cesium.Cartesian3(0, 0, 0);
+        const toEarthCenter = Cesium.Cartesian3.subtract(earthCenter, cesiumCamera.position, new Cesium.Cartesian3());
+        Cesium.Cartesian3.normalize(toEarthCenter, toEarthCenter);
+        const dot = Cesium.Cartesian3.dot(cesiumCamera.direction, toEarthCenter);
+        console.log(`   Direction alignment with Earth: ${dot.toFixed(3)} (>0 = toward Earth, <0 = away from Earth)`);
+        if (dot < 0) {
+            console.log(`   ⚠️ WARNING: Camera direction points AWAY from Earth! Frustum is inverted!`);
+        }
+        
+        // Distance from Earth surface
+        const distanceFromEarth = this.calculateCameraDistanceFromEarth();
+        console.log(`   Distance from Earth: ${(distanceFromEarth / 1000).toFixed(1)}km`);
+        
+        // Frustum details
+        const aspectRatio = this.engine.getRenderWidth() / this.engine.getRenderHeight();
+        console.log(`   Aspect Ratio: ${aspectRatio.toFixed(3)} (${this.engine.getRenderWidth()}x${this.engine.getRenderHeight()})`);
+        
+        if (this.cesiumTileset) {
+            const stats = this.cesiumTileset.statistics;
+            console.log(`   Tileset: selected=${stats.selected}, visited=${stats.visited}, ready=${stats.numberOfTilesWithContentReady}`);
+            
+            // Show selected tile bounding information as alternative to visual bounding volumes
+            const selectedTiles = (this.cesiumTileset as any)._selectedTiles || [];
+            if (selectedTiles.length > 0) {
+                console.log(`   Selected Tiles (${selectedTiles.length}):`);
+                selectedTiles.slice(0, 3).forEach((tile: any, i: number) => {
+                    const boundingVolume = tile.boundingVolume;
+                    if (boundingVolume && boundingVolume.boundingSphere) {
+                        const sphere = boundingVolume.boundingSphere;
+                        const center = sphere.center;
+                        const radius = sphere.radius;
+                        console.log(`     [${i}] Depth ${tile._depth}: center=(${center.x.toFixed(0)}, ${center.y.toFixed(0)}, ${center.z.toFixed(0)}), radius=${(radius/1000).toFixed(1)}km`);
+                    }
+                });
+                if (selectedTiles.length > 3) {
+                    console.log(`     ... and ${selectedTiles.length - 3} more tiles`);
+                }
+            }
+        }
+    }
+    
+    /**
+     * Cleanup resources
+     */
+    dispose(): void {
+        this.clearBoundingVolumeWireframes();
+        this.clearFrustumWireframe();
     }
 }

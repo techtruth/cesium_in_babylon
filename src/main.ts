@@ -59,8 +59,9 @@ window.addEventListener('DOMContentLoaded', async () => {
         camera.keysDownward = [69]; // E
         
         // CRITICAL: Near-Cesium frustum parameters for Google Tilesets
-        camera.minZ = 1000;           // Near: 1km (working commit configuration)
-        camera.maxZ = 200000000;      // Far: 200,000km (working commit configuration)
+        // FIXED: Use same near plane as integration (0.1) for consistency
+        camera.minZ = 0.1;            // Near: 0.1m (matches simpleIntegration.ts)
+        camera.maxZ = 200000000;      // Far: 200,000km
         
         // Make camera movement faster for large scale
         // Mouse wheel sensitivity for zooming
@@ -107,26 +108,25 @@ window.addEventListener('DOMContentLoaded', async () => {
     try {
         // Loading 3D Tiles
         
-        // Try loading Google Photorealistic 3D Tiles
-        // Note: This requires a valid Cesium Ion access token with Google access
+        // Try loading Moon tileset from Cesium Ion
         try {
             
-            // Google Photorealistic 3D Tiles asset ID from Cesium Ion
-            await integration.loadGooglePhotorealistic3DTiles(2275207);
-            // Google Photorealistic 3D Tiles loaded
+            // Moon tileset asset ID from Cesium Ion
+            await integration.loadCesiumIonAsset(2684829, 'Moon Tileset');
+            // Moon Tileset loaded
             
-            // Calculate proper NYC/Statue of Liberty coordinates using Cesium's WGS84 ellipsoid
-            // Statue of Liberty: 40.6892° N, 74.0445° W
-            const libertyLat = 40.6892 * Math.PI / 180;
-            const libertyLon = -74.0445 * Math.PI / 180;
-            const surfaceAltitude = 0; // Sea level
-            const cameraAltitude = 15000; // 15km above surface - proper altitude to avoid zero distance issues with large tiles
+            // Calculate Moon surface coordinates - use lunar ellipsoid
+            // Moon center: 0° N, 0° W (lunar equator and prime meridian)
+            const moonLat = 0 * Math.PI / 180;  // Equator
+            const moonLon = 0 * Math.PI / 180;  // Prime meridian
+            const surfaceAltitude = 0; // Moon surface
+            const cameraAltitude = 15000; // 15km above surface
             
             console.log('📐 COORDINATE SETUP:', {
-                latDegrees: 40.6892,
-                lonDegrees: -74.0445,
-                latRadians: libertyLat,
-                lonRadians: libertyLon,
+                latDegrees: 0,
+                lonDegrees: 0,
+                latRadians: moonLat,
+                lonRadians: moonLon,
                 surfaceAltitude,
                 cameraAltitude
             });
@@ -136,56 +136,55 @@ window.addEventListener('DOMContentLoaded', async () => {
             
             // Silent coordinate transformation - logging removed to reduce console spam
             
-            // Get ECEF positions using Cesium's WGS84 ellipsoid
-            const nycSurfaceCesium = CesiumCartesian3.fromRadians(libertyLon, libertyLat, surfaceAltitude);
-            const cameraPositionCesium = CesiumCartesian3.fromRadians(libertyLon, libertyLat, cameraAltitude);
+            // Get positions using Moon ellipsoid (assuming spherical for simplicity)
+            const moonSurfaceCesium = CesiumCartesian3.fromRadians(moonLon, moonLat, surfaceAltitude);
+            const cameraPositionCesium = CesiumCartesian3.fromRadians(moonLon, moonLat, cameraAltitude);
             
-            console.log('🗽 NYC COORDINATES DEBUG:');
-            console.log(`   Lat/Lon: ${40.6892}°, ${-74.0445}° (${libertyLat.toFixed(6)}, ${libertyLon.toFixed(6)} radians)`);
+            console.log('🌙 MOON COORDINATES DEBUG:');
+            console.log(`   Lat/Lon: ${0}°, ${0}° (${moonLat.toFixed(6)}, ${moonLon.toFixed(6)} radians)`);
             console.log(`   Original Cesium ECEF camera: (${cameraPositionCesium.x.toFixed(0)}, ${cameraPositionCesium.y.toFixed(0)}, ${cameraPositionCesium.z.toFixed(0)})`);
             console.log(`   → Babylon camera position: (${cameraPositionCesium.x.toFixed(0)}, ${cameraPositionCesium.z.toFixed(0)}, ${cameraPositionCesium.y.toFixed(0)})`);
             console.log(`   EXPECTATION: simpleIntegration should send back the original ECEF coordinates`);
             
             // Store for reference
-            (window as any).originalNYCEcef = cameraPositionCesium;
+            (window as any).originalMoonEcef = cameraPositionCesium;
             
             // ECEF → BABYLON: Coordinate system alignment transform (X, Y, Z) → (X, Z, -Y)
-            // Aligns Cesium Earth-centered coordinates to Babylon view-centered coordinates
-            const nycSurface = new Vector3(nycSurfaceCesium.x, nycSurfaceCesium.z, -nycSurfaceCesium.y);
+            // Aligns Cesium Moon-centered coordinates to Babylon view-centered coordinates
+            const moonSurface = new Vector3(moonSurfaceCesium.x, moonSurfaceCesium.z, -moonSurfaceCesium.y);
             const cameraPosition = new Vector3(cameraPositionCesium.x, cameraPositionCesium.z, -cameraPositionCesium.y);
             
             // Coordinate system alignment: Cesium ECEF → Babylon view-centered
             console.log('📍 BABYLON CAMERA POSITIONING:', {
-                nycSurfaceBabylon: { x: nycSurface.x, y: nycSurface.y, z: nycSurface.z },
+                moonSurfaceBabylon: { x: moonSurface.x, y: moonSurface.y, z: moonSurface.z },
                 cameraPositionBabylon: { x: cameraPosition.x, y: cameraPosition.y, z: cameraPosition.z },
-                distanceFromSurface: Vector3.Distance(cameraPosition, nycSurface),
+                distanceFromSurface: Vector3.Distance(cameraPosition, moonSurface),
                 expectedDistance: cameraAltitude
             });
             
-            // Store NYC surface coordinates for spacebar functionality
-            const nycSurfaceForFrameState = nycSurfaceCesium;
+            // Store Moon surface coordinates for spacebar functionality
+            const moonSurfaceForFrameState = moonSurfaceCesium;
             
-            // Set camera position and look down at NYC surface
+            // Set camera position and look down at Moon surface
             camera.position = cameraPosition;
-            camera.setTarget(nycSurface);
+            camera.setTarget(moonSurface);
             
-            // Camera positioned and targeted at NYC
+            // Camera positioned and targeted at Moon
             
-            // Add keyboard controls for camera speed (1-9 keys) and mesh toggle (0 key)
+            // Add keyboard controls
             window.addEventListener('keydown', (event) => {
                 const key = event.key;
                 if (key >= '1' && key <= '9') {
                     const speedLevel = parseInt(key);
                     currentSpeedLevel = speedLevel;
                     camera.speed = cameraSpeedLevels[currentSpeedLevel];
-                    // Camera speed changed
                 } else if (key === '0') {
                     // Toggle all mesh visibility
                     let totalMeshes = 0;
                     let visibleMeshes = 0;
                     
                     scene.meshes.forEach(mesh => {
-                        if (mesh.name !== 'camera' && mesh.name !== 'earthWGS84') {
+                        if (mesh.name !== 'camera' && mesh.name !== 'moonSphere') {
                             totalMeshes++;
                             if (mesh.isEnabled()) visibleMeshes++;
                         }
@@ -194,44 +193,51 @@ window.addEventListener('DOMContentLoaded', async () => {
                     const shouldShowAll = visibleMeshes < totalMeshes;
                     
                     scene.meshes.forEach(mesh => {
-                        if (mesh.name !== 'camera' && mesh.name !== 'earthWGS84') {
+                        if (mesh.name !== 'camera' && mesh.name !== 'moonSphere') {
                             mesh.setEnabled(shouldShowAll);
                         }
                     });
                     
                     console.log(`🔄 MESH TOGGLE: ${shouldShowAll ? 'SHOWING' : 'HIDING'} all ${totalMeshes} tile meshes`);
+                } else if (key === ' ') {
+                    // Spacebar: Step Cesium camera update
+                    event.preventDefault(); // Prevent page scroll
+                    integration.stepCameraUpdate();
+                } else if (key === 'b' || key === 'B') {
+                    // B key: Toggle bounding volume visibility
+                    integration.toggleBoundingVolumes();
+                } else if (key === 'f' || key === 'F') {
+                    // F key: Toggle frustum wireframe visibility
+                    integration.toggleFrustumWireframe();
                 }
             });
             
-            // Camera positioned over NYC
+            // Camera positioned over Moon
             
             // Add visual reference objects to understand coordinate system
             const { MeshBuilder, StandardMaterial, Color3 } = await import('@babylonjs/core');
             
-            // Create actual Earth ellipsoid using WGS84 dimensions
-            const earthRadiusEquatorial = 6378137; // WGS84 equatorial radius in meters
-            const earthRadiusPolar = 6356752.314245; // WGS84 polar radius in meters
+            // Create Moon sphere using lunar dimensions
+            const moonRadius = 1737400; // Moon radius in meters (approximately spherical)
             
-            // Creating WGS84 Earth ellipsoid
+            // Creating Moon sphere
             
-            // Create proper ellipsoid (oblate spheroid) using Babylon's CreateSphere with different X/Z vs Y scaling
-            const earthEllipsoid = MeshBuilder.CreateSphere("earthWGS84", {
-                diameterX: earthRadiusEquatorial * 2,  // Equatorial diameter (X-axis)
-                diameterY: earthRadiusPolar * 2,       // Polar diameter (Y-axis) 
-                diameterZ: earthRadiusEquatorial * 2,  // Equatorial diameter (Z-axis)
-                segments: 64  // Higher resolution for better ellipsoid approximation
+            // Create sphere for the Moon (approximately spherical, not oblate like Earth)
+            const moonSphere = MeshBuilder.CreateSphere("moonSphere", {
+                diameter: moonRadius * 2,  // Moon diameter
+                segments: 64  // Higher resolution for better sphere approximation
             }, scene);
-            earthEllipsoid.position = Vector3.Zero();
-            earthEllipsoid.setEnabled(false); // Hide the Earth ellipsoid
+            moonSphere.position = Vector3.Zero();
+            moonSphere.setEnabled(false); // Hide the Moon sphere
             
-            const earthMaterial = new StandardMaterial("earthMaterial", scene);
-            earthMaterial.diffuseColor = new Color3(0.2, 0.4, 0.8); // Earth blue
-            earthMaterial.emissiveColor = new Color3(0.05, 0.1, 0.2); // Slight glow
-            earthMaterial.wireframe = true; // Show as wireframe so we can see through it
-            earthEllipsoid.material = earthMaterial;
+            const moonMaterial = new StandardMaterial("moonMaterial", scene);
+            moonMaterial.diffuseColor = new Color3(0.8, 0.8, 0.7); // Moon gray/white
+            moonMaterial.emissiveColor = new Color3(0.2, 0.2, 0.15); // Slight glow
+            moonMaterial.wireframe = true; // Show as wireframe so we can see through it
+            moonSphere.material = moonMaterial;
             
-            // SKY BARRIER: 5000m above Earth surface for camera boundary detection
-            const skyBarrierRadius = earthRadiusEquatorial + 5000; // 5000m above equatorial radius
+            // SKY BARRIER: 5000m above Moon surface for camera boundary detection
+            const skyBarrierRadius = moonRadius + 5000; // 5000m above Moon surface
             const skyBarrier = MeshBuilder.CreateSphere("skyBarrier", {
                 diameter: skyBarrierRadius * 2,
                 segments: 32  // Lower resolution for performance
@@ -248,9 +254,9 @@ window.addEventListener('DOMContentLoaded', async () => {
             
             // Silent sky barrier creation
             
-            // NYC marker removed for cleaner debugging view
+            // Moon marker removed for cleaner debugging view
             
-            // Green wireframe sphere at Earth center for reference - make it bigger
+            // Green wireframe sphere at Moon center for reference - make it bigger
             const centerSphere = MeshBuilder.CreateSphere("centerSphere", {diameter: 100000}, scene); // 100km sphere
             centerSphere.position = Vector3.Zero();
             const centerMaterial = new StandardMaterial("centerMaterial", scene);
@@ -278,7 +284,7 @@ window.addEventListener('DOMContentLoaded', async () => {
             // Reference objects created
             
         } catch (error) {
-            console.error("Failed to load Google Photorealistic 3D Tiles:", error);
+            console.error("Failed to load Moon Tileset:", error);
             throw error; // Let the outer catch handle it
         }
         

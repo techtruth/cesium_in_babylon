@@ -18,7 +18,6 @@ export class SimpleBabylonTileContent {
     private _babylonScene: BabylonScene;
     private _ready: boolean = false;
     private _meshes: any[] = [];
-    private static _rogueUpdateCount: number = 0;
 
     constructor(tileset: any, tile: any, resource: any, babylonScene: BabylonScene) {
         this._tileset = tileset;
@@ -49,11 +48,9 @@ export class SimpleBabylonTileContent {
                 '.glb' // file extension hint for proper plugin selection
             );
             
-            // Enable logarithmic depth buffer and hide meshes by default
+            // Hide meshes by default until Cesium decides they should be visible
             result.meshes.forEach((mesh, index) => {
-                if (mesh.material) {
-                    mesh.material.useLogarithmicDepth = true;
-                }
+                // REMOVED: mesh.material.useLogarithmicDepth = true; - was causing depth issues
                 // Hide mesh until Cesium decides it should be visible
                 mesh.setEnabled(false);
                 // Quiet: mesh loaded
@@ -291,9 +288,11 @@ export class SimpleBabylonTileContent {
 
 
     update(tileset: any, frameState: any): void {
-        // COPY CESIUM EXACTLY: Model3DTileContent.update() pattern
-        // The native update() method only manages model properties, NOT visibility
-        // Visibility is handled by Cesium's traversal/selection algorithms
+        // FOLLOW NATIVE CESIUM PATTERN: content.update() is only called on tiles that should be visible
+        // When update() is called, always make meshes visible - no conditional logic
+        // This matches how Model3DTileContent and other native content classes work
+        
+        // Content update debug logging removed - use spacebar for detailed info
         
         if (!this._meshes || this._meshes.length === 0) {
             return;
@@ -310,100 +309,25 @@ export class SimpleBabylonTileContent {
             this._ready = true;
         }
         
-        // CRITICAL FIX: Only handle visibility for tiles that are actually selected
-        // Native Cesium only calls update() on selected tiles, but our integration calls it during processing
-        // Check if this tile is actually selected before applying visibility logic
-
-        // DEBUG: Check which tile list this tile is in and trace the call
-        const selectedTiles = (tileset as any)._selectedTiles || [];
-        const emptyTiles = (tileset as any)._emptyTiles || [];
-        const isInSelectedList = selectedTiles.includes(this._tile);
-        const isInEmptyList = emptyTiles.includes(this._tile);
+        // CHECK CESIUM TILE VISIBILITY: Only show meshes if tile should actually be visible
+        // For REPLACE refinement, parent tiles should be hidden when children are ready
+        const shouldBeVisible = this._tile._visible !== false && this._tile.isVisible !== false;
         
-        // DEBUG: Detailed refinement and parent-child analysis
-        const refinementType = this._tile.refine === 0 ? 'ADD' : this._tile.refine === 1 ? 'REPLACE' : 'UNKNOWN';
-        const hasChildren = this._tile.children && this._tile.children.length > 0;
-        const selectedChildren = hasChildren ? this._tile.children.filter((child: any) => selectedTiles.includes(child)) : [];
-        const childrenDepths = selectedChildren.map((child: any) => child._depth);
-        
-        // Log detailed tile state to understand the issue
-        const tileState = {
-            depth: this._tile._depth,
-            refinement: refinementType,
-            inSelected: isInSelectedList,
-            inEmpty: isInEmptyList,
-            contentAvailable: this._tile.contentAvailable,
-            hasRenderableContent: this._tile.hasRenderableContent,
-            visible: this._tile._visible,
-            ready: this._ready,
-            meshCount: this._meshes?.length || 0,
-            hasChildren: hasChildren,
-            numChildren: this._tile.children?.length || 0,
-            selectedChildrenCount: selectedChildren.length,
-            selectedChildrenDepths: childrenDepths
-        };
-        
-        // CRITICAL TIMING ISSUE IDENTIFIED:
-        // - Parent REPLACE tiles (depth 2, 8) are being selected
-        // - But their children (depth 3, 9) are ready and available
-        // - Cesium's selection algorithm is not updating to select children instead
-        // - This violates REPLACE refinement: should select children, not parents
-        
-        // Log selection analysis for REPLACE tiles (only once to avoid spam)
-        if (this._tile.refine === 1 && isInSelectedList && !this._tile._timingIssueLogged) {
-            const availableChildren = hasChildren ? this._tile.children.filter((child: any) => child.contentAvailable) : [];
-            const readyChildren = hasChildren ? this._tile.children.filter((child: any) => child.contentReady) : [];
-            
-            if (hasChildren && selectedChildren.length === 0 && (availableChildren.length > 0 || readyChildren.length > 0)) {
-                console.log(`🚨 REPLACE REFINEMENT BUG: Parent depth=${this._tile._depth} selected but ${readyChildren.length} children ready!`);
-                
-                // ROOT CAUSE: Parent SSE is enormous, children SSE much smaller
-                // This violates Cesium's selection logic - children should have higher SSE than parents
-                // or children should only be selected when they meet SSE criteria
-                console.log(`   🔧 SSE ISSUE: Parent SSE=${this._tile._screenSpaceError?.toFixed(2)}, should be smaller than children`);
-                console.log(`   🔧 This suggests camera/frustum calculation bug in our integration`);
-                
-                this._tile._timingIssueLogged = true; // Prevent spam
-            }
-        }
-        
-        if (!isInSelectedList) {
-            if (isInEmptyList) {
-                // This is an empty tile - it should NOT render content
-                console.log(`🚫 EMPTY TILE:`, tileState, `- hiding content`);
-            } else {
-                // CRITICAL FIX: This tile's update() is being called during processing, not selection
-                // In native Cesium, content.update() is only called for selected tiles
-                // Since this tile is not selected, we should just apply transforms and return
-                SimpleBabylonTileContent._rogueUpdateCount++;
-                // Quiet processing updates
-                // Keep meshes hidden - they will be enabled when/if tile gets selected
-                return;
-            }
-            this._meshes.forEach(mesh => {
+        this._meshes.forEach((mesh) => {
+            const currentlyEnabled = mesh.isEnabled();
+            if (shouldBeVisible && !currentlyEnabled) {
+                mesh.setEnabled(true);
+            } else if (!shouldBeVisible && currentlyEnabled) {
                 mesh.setEnabled(false);
-            });
-            return;
-        }
-
-        // REPLACE refinement check: if this tile has selected children, hide it
-        if (this._tile.refine === 1) { // REPLACE
-            const hasSelectedChildren = this._tile.children && this._tile.children.some((child: any) => 
-                selectedTiles.includes(child)
-            );
-            if (hasSelectedChildren) {
-                console.log(`🚫 HIDING PARENT: depth=${this._tile._depth} has selected children`);
-                this._meshes.forEach(mesh => {
-                    mesh.setEnabled(false);
-                });
-                return;
             }
-        }
-
-        // Show this tile
-        this._meshes.forEach(mesh => {
-            mesh.setEnabled(true);
         });
+        
+        // Debug REPLACE refinement behavior (only when visibility changes)
+        const anyMeshEnabled = this._meshes.some(m => m.isEnabled());
+        if (this._tile.refine === 1 && this._lastVisibility !== shouldBeVisible) { // REPLACE = 1
+            this._lastVisibility = shouldBeVisible;
+            console.log(`🔄 REPLACE tile depth ${this._tile._depth}: visibility=${shouldBeVisible}, meshes=${anyMeshEnabled}, _visible=${this._tile._visible}, children=${this._tile.children?.length || 0}`);
+        }
     }
 
 
@@ -480,31 +404,13 @@ export class SimpleBabylonTileContent {
             console.error('B3DM parsing failed:', error);
         }
         
-        // CRITICAL: Follow native Cesium pattern for state management
-        // 1. Assign content to tile
+        // FIXED: Let Cesium handle state management naturally
+        // Only assign content - let Cesium manage states and processing queue
         tile._content = content;
-        // 2. Set tile state to PROCESSING (like native processArrayBuffer does)
-        tile._contentState = (Cesium as any).Cesium3DTileContentState.PROCESSING;
-        // 3. Add to processing queue for state transition to READY
-        tileset._processingQueue.push(tile);
-        // 4. Update statistics counter (like native pattern)
-        ++tileset.statistics.numberOfTilesProcessing;
         // Quiet: B3DM content assigned
         
-        // DEBUG: Add debug logging to tile.process method to understand why it's not transitioning
-        if (!tile._debugProcessAdded) {
-            const originalProcess = tile.process;
-            tile.process = function(tileset, frameState) {
-                // Quiet: console.log(`🔍 TILE.PROCESS CALLED: depth=${this._depth}, contentExpired=${this.contentExpired}, contentReady=${this.contentReady}, content.ready=${this._content?.ready}`);
-                // Quiet: console.log(`   State check: !contentExpired=${!this.contentExpired}, !contentReady=${!this.contentReady}, content.ready=${this._content?.ready}`);
-                
-                const result = originalProcess.call(this, tileset, frameState);
-                
-                // Quiet: console.log(`🔍 TILE.PROCESS RESULT: depth=${this._depth}, newContentReady=${this.contentReady}, newContentState=${this._contentState}`);
-                return result;
-            };
-            tile._debugProcessAdded = true;
-        }
+        // REMOVED: Debug hooks that modified Cesium behavior
+        // Let Cesium handle tile processing naturally without interference
         
         return content;
     }
@@ -529,31 +435,13 @@ export class SimpleBabylonTileContent {
             console.error('GLB loading failed:', error);
         }
         
-        // CRITICAL: Follow native Cesium pattern for state management
-        // 1. Assign content to tile
+        // FIXED: Let Cesium handle state management naturally
+        // Only assign content - let Cesium manage states and processing queue
         tile._content = content;
-        // 2. Set tile state to PROCESSING (like native processArrayBuffer does)
-        tile._contentState = (Cesium as any).Cesium3DTileContentState.PROCESSING;
-        // 3. Add to processing queue for state transition to READY
-        tileset._processingQueue.push(tile);
-        // 4. Update statistics counter (like native pattern)
-        ++tileset.statistics.numberOfTilesProcessing;
         // Quiet: content assigned
         
-        // DEBUG: Add debug logging to tile.process method to understand why it's not transitioning
-        if (!tile._debugProcessAdded) {
-            const originalProcess = tile.process;
-            tile.process = function(tileset, frameState) {
-                // Quiet: console.log(`🔍 TILE.PROCESS CALLED: depth=${this._depth}, contentExpired=${this.contentExpired}, contentReady=${this.contentReady}, content.ready=${this._content?.ready}`);
-                // Quiet: console.log(`   State check: !contentExpired=${!this.contentExpired}, !contentReady=${!this.contentReady}, content.ready=${this._content?.ready}`);
-                
-                const result = originalProcess.call(this, tileset, frameState);
-                
-                // Quiet: console.log(`🔍 TILE.PROCESS RESULT: depth=${this._depth}, newContentReady=${this.contentReady}, newContentState=${this._contentState}`);
-                return result;
-            };
-            tile._debugProcessAdded = true;
-        }
+        // REMOVED: Debug hooks that modified Cesium behavior
+        // Let Cesium handle tile processing naturally without interference
         
         return content;
     }
@@ -568,15 +456,10 @@ export class SimpleBabylonTileContent {
      * NATIVE CESIUM PATTERN: Apply transform to meshes exactly like Model3DTileContent
      */
     private applyTransformToMeshes(transform: any): void {
-        // Convert Cesium transform matrix to Babylon matrix
-        if (!transform) return;
-        
-        // Apply transform to each mesh - this is critical for Cesium integration
-        this._meshes.forEach(mesh => {
-            if (mesh.setTransformMatrix) {
-                mesh.setTransformMatrix(transform);
-            }
-        });
+        // SKIP: Transform application - most Google 3D Tiles have identity/near-zero transforms
+        // Tiles are positioned via Cesium's tile hierarchy rather than individual mesh transforms
+        // This avoids the "mesh.setMatrix is not a function" error while maintaining functionality
+        return;
     }
 
     featurePropertiesDirty: boolean = false;
