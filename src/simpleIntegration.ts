@@ -195,8 +195,10 @@ export class SimpleIntegration {
                 maximumCacheOverflowBytes: 1024 * 1024 * 1024, // 1GB (Google-optimized)
                 enableCollision: true,                        // Official Google config
                 
+                // CESIUM DEFAULT: Use correct value for Google tiles' geometric error scale (262k-525k range)
+                maximumScreenSpaceError: 16,                  // Restored to Cesium default - Google tiles optimized for this value
+                
                 // All other settings use Cesium defaults (including dynamic SSE system):
-                // - maximumScreenSpaceError: 16 (default, not 8)
                 // - skipLevelOfDetail: false (default, not true) 
                 // - dynamicScreenSpaceError: true (default - adaptive refinement)
                 // - dynamicScreenSpaceErrorDensity: 2.0e-4 (default)
@@ -394,12 +396,37 @@ export class SimpleIntegration {
             // Log potential REPLACE refinement issues
             const replaceWithChildren = refinementAnalysis.filter(t => t.refine === 'REPLACE' && t.hasChildren);
             if (replaceWithChildren.length > 0) {
-                console.log(`   ⚠️  REPLACE tiles with children selected: ${replaceWithChildren.length} (should be 0 for proper REPLACE refinement)`);
-                replaceWithChildren.forEach(tile => {
-                    console.log(`      Depth ${tile.depth}: ${tile.childCount} children`);
+                // DISTANCE ANALYSIS: Separate local vs far tiles
+                const cameraPos = frameState.camera.position;
+                const localTiles = replaceWithChildren.filter((tile: any) => {
+                    const tileCenter = tile.boundingVolume?._boundingSphere?.center;
+                    const distance = tileCenter ? Cesium.Cartesian3.distance(tileCenter, cameraPos) : 0;
+                    return distance < 100000; // 100km threshold
+                });
+                const farTiles = replaceWithChildren.filter((tile: any) => {
+                    const tileCenter = tile.boundingVolume?._boundingSphere?.center;
+                    const distance = tileCenter ? Cesium.Cartesian3.distance(tileCenter, cameraPos) : 0;
+                    return distance >= 100000;
                 });
                 
+                console.log(`   ⚠️  REPLACE tiles with children selected: ${replaceWithChildren.length} total (${localTiles.length} local + ${farTiles.length} far)`);
+                console.log(`   🎯 LOCAL NYC TILES (< 100km): ${localTiles.length} (these should be 0 for proper REPLACE refinement)`);
+                
+                localTiles.forEach((tile: any) => {
+                    const tileCenter = tile.boundingVolume?._boundingSphere?.center;
+                    const distanceMeters = tileCenter ? Cesium.Cartesian3.distance(tileCenter, cameraPos) : 0;
+                    const distanceNote = distanceMeters < 1 ? " (camera inside bounding volume - normal)" : "";
+                    console.log(`      LOCAL Depth ${tile.depth}: ${tile.childCount} children (${distanceMeters.toFixed(1)}m from camera${distanceNote})`);
+                });
+                
+                if (farTiles.length > 0) {
+                    console.log(`   📍 FAR TILES (> 100km): ${farTiles.length} (ignoring detailed analysis)`);
+                }
+                
                 // CRITICAL: Check if children are ready but not selected (timing issue)
+                let localTilesAnalyzed = 0;
+                let localTilesWithReadyChildren = 0;
+                
                 selectedTiles.forEach((selectedTile: any) => {
                     if (selectedTile.refine === 1 && selectedTile.children) { // REPLACE with children
                         const childrenStates = selectedTile.children.map((child: any) => ({
@@ -408,11 +435,32 @@ export class SimpleIntegration {
                             contentReady: child.contentReady,
                             selected: selectedTiles.includes(child)
                         }));
-                        const readyChildren = childrenStates.filter(c => c.contentReady);
-                        const availableChildren = childrenStates.filter(c => c.contentAvailable);
+                        const readyChildren = childrenStates.filter((c: any) => c.contentReady);
+                        const availableChildren = childrenStates.filter((c: any) => c.contentAvailable);
+                        
+                        // CHILDREN STATE LOGGING: Show why detailed analysis may not trigger
+                        const tileCenter = selectedTile.boundingVolume?._boundingSphere?.center;
+                        const cameraPos = frameState.camera.position;
+                        const distanceToTile = tileCenter ? Cesium.Cartesian3.distance(tileCenter, cameraPos) : 0;
+                        const isLocalTile = distanceToTile < 100000; // 100km threshold for NYC area
+                        
+                        if (isLocalTile) {
+                            localTilesAnalyzed++;
+                            if (readyChildren.length > 0) localTilesWithReadyChildren++;
+                            console.log(`   🔍 LOCAL TILE CHILDREN CHECK: depth ${selectedTile._depth} - ready:${readyChildren.length}/${selectedTile.children.length}, available:${availableChildren.length}/${selectedTile.children.length}`);
+                        }
                         
                         if (readyChildren.length > 0 || availableChildren.length > 0) {
-                            console.log(`   🚨 SELECTION ALGORITHM ISSUE: depth ${selectedTile._depth} selected but children ready`);
+                            // DISTANCE FILTERING: Only analyze tiles within reasonable distance of NYC (already calculated above)
+                            
+                            if (!isLocalTile) {
+                                // Skip detailed analysis for far-away tiles - just log summary
+                                console.log(`   📍 FAR TILE SKIPPED: depth ${selectedTile._depth} at ${(distanceToTile/1000).toFixed(0)}km from camera (> 100km threshold)`);
+                                return; // Skip this tile's detailed analysis
+                            }
+                            
+                            const distanceNote = distanceToTile < 1 ? " (camera inside bounding volume - normal)" : "";
+                            console.log(`   🚨 NYC-LOCAL SELECTION ISSUE: depth ${selectedTile._depth} selected but children ready (${distanceToTile.toFixed(1)}m from camera${distanceNote})`);
                             const parentSSE = selectedTile.getScreenSpaceError(frameState);
                             console.log(`      Parent SSE: ${parentSSE.toFixed(2)}, refine: ${selectedTile.refine === 1 ? 'REPLACE' : 'ADD'}`);
                             console.log(`      Ready children: ${readyChildren.length}/${selectedTile.children.length}`);
@@ -468,6 +516,61 @@ export class SimpleIntegration {
                                     const content = child._content;
                                     console.log(`         Child ${i}: contentReady=${child.contentReady}, hasRenderableContent=${child.hasRenderableContent}, contentAvailable=${child.contentAvailable}, contentState=${child._contentState}, content.ready=${content?.ready}`);
                                     console.log(`            isVisible=${child.isVisible}, _visible=${child._visible}, _inRequestVolume=${child._inRequestVolume}, _visibilityPlaneMask=${child._visibilityPlaneMask}`);
+                                    
+                                    // DETAILED VISIBILITY DEBUG: Why are children not visible?
+                                    if (!child.isVisible) {
+                                        console.log(`            🔍 VISIBILITY FAILURE ANALYSIS for Child ${i}:`);
+                                        console.log(`               boundingVolume exists: ${!!child.boundingVolume}`);
+                                        if (child.boundingVolume) {
+                                            console.log(`               boundingVolume type: ${child.boundingVolume.constructor.name}`);
+                                            if (child.boundingVolume._boundingSphere) {
+                                                const sphere = child.boundingVolume._boundingSphere;
+                                                console.log(`               bounding sphere: center=(${sphere.center.x.toFixed(0)}, ${sphere.center.y.toFixed(0)}, ${sphere.center.z.toFixed(0)}), radius=${(sphere.radius/1000).toFixed(1)}km`);
+                                            }
+                                            
+                                            // Test visibility manually - call the same method Cesium uses
+                                            const camera = this.createCesiumCamera();
+                                            const cullingVolume = camera.frustum.computeCullingVolume(camera.position, camera.direction, camera.up);
+                                            const intersection = child.boundingVolume.intersectPlane?.call ? 
+                                                child.boundingVolume.intersectPlane(Cesium.Plane.fromPointNormal(camera.position, camera.direction)) :
+                                                'no intersectPlane method';
+                                            console.log(`               manual visibility test: ${intersection}`);
+                                            
+                                            // Check distance from camera
+                                            const childDistance = child.boundingVolume.distanceToCamera(frameState);
+                                            console.log(`               distance to camera: ${childDistance.toFixed(2)}m`);
+                                            
+                                            // Compare with parent distance
+                                            const parentDistance = selectedTile.boundingVolume.distanceToCamera(frameState);
+                                            console.log(`               parent distance: ${parentDistance.toFixed(2)}m (child should be closer)`);
+                                        }
+                                    }
+                                    
+                                    // CONTENT DEBUG: Why don't children have renderable content?
+                                    if (!child.hasRenderableContent || !child.contentAvailable) {
+                                        console.log(`            🔍 CONTENT FAILURE ANALYSIS for Child ${i}:`);
+                                        console.log(`               hasRenderableContent: ${child.hasRenderableContent}`);
+                                        console.log(`               contentAvailable: ${child.contentAvailable}`);
+                                        console.log(`               contentReady: ${child.contentReady}`);
+                                        console.log(`               contentState: ${child._contentState} (${this.getContentStateName(child._contentState)})`);
+                                        console.log(`               hasContent: ${!!child._content}`);
+                                        console.log(`               content type: ${child._content?.constructor?.name || 'none'}`);
+                                        
+                                        if (child._content) {
+                                            console.log(`               content.ready: ${child._content.ready}`);
+                                            console.log(`               content._ready: ${child._content._ready}`);
+                                            console.log(`               content._meshes: ${child._content._meshes?.length || 0} meshes`);
+                                            
+                                            // Check if factory was called for this tile
+                                            const contentResource = child._contentResource;
+                                            if (contentResource) {
+                                                console.log(`               content URL: ${contentResource.url}`);
+                                                console.log(`               URL suffix: ${contentResource.url.split('/').pop()}`);
+                                                const urlSuffix = contentResource.url.split('.').pop()?.toLowerCase();
+                                                console.log(`               content type from URL: ${urlSuffix} (b3dm/glb/pnts/i3dm/cmpt)`);
+                                            }
+                                        }
+                                    }
                                 });
                                 
                                 if (parentMeshes.filter(m => m.isEnabled()).length > 0 && childMeshes.filter(m => m.isEnabled()).length > 0) {
@@ -531,6 +634,9 @@ export class SimpleIntegration {
                         }
                     }
                 });
+                
+                // SUMMARY: Local tiles analysis results  
+                console.log(`   📊 LOCAL TILES SUMMARY: ${localTilesAnalyzed} analyzed, ${localTilesWithReadyChildren} have ready children, ${localTilesWithReadyChildren > 0 ? localTilesWithReadyChildren : '0'} triggered detailed analysis`);
             }
         }
         
@@ -560,6 +666,15 @@ export class SimpleIntegration {
             
             console.log('   Traversal type:', this.cesiumTileset?.isSkippingLevelOfDetail ? 'SkipTraversal' : 'BaseTraversal');
             
+            // DEBUG: Why isSkippingLevelOfDetail might be false
+            console.log('🔍 SKIP LOD DEBUG:', {
+                skipLevelOfDetail: this.cesiumTileset.skipLevelOfDetail,
+                isSkippingLevelOfDetail: this.cesiumTileset.isSkippingLevelOfDetail,
+                _classificationType: (this.cesiumTileset as any)._classificationType,
+                _disableSkipLevelOfDetail: (this.cesiumTileset as any)._disableSkipLevelOfDetail,
+                _allTilesAdditive: (this.cesiumTileset as any)._allTilesAdditive
+            });
+            
             // CHECK: If root has empty content but children exist, does traversal proceed?
             if (root?.hasEmptyContent && root?.children?.length > 0) {
                 console.log('   ROOT ANALYSIS: Empty root with children - checking first child:');
@@ -581,6 +696,10 @@ export class SimpleIntegration {
             const stats = this.cesiumTileset?.statistics;
             
             console.log('📊 LOADING PROGRESS ANALYSIS:');
+            
+            // Add cache and memory analysis
+            this.analyzeCacheAndMemoryLimits();
+            this.monitorMemoryAdjustedSSE();
             
             // Enhanced RequestScheduler status with request queue details
             if (RequestScheduler) {
@@ -647,6 +766,9 @@ export class SimpleIntegration {
                 
                 const readyChildren = childrenStates.filter((c: any) => c.contentAvailable).length;
                 console.log(`   Children progress: ${readyChildren}/${root.children.length} ready`);
+                
+                // Add Google tiles loading pattern analysis
+                this.analyzeGoogleTilesLoadingPattern(root);
             }
         }
         
@@ -1652,9 +1774,11 @@ export class SimpleIntegration {
             console.log('✅ Hooked executeEmptyTraversal()');
         }
         
-        // REMOVED: BaseTraversal.selectTiles hook was interfering with tile selection
-        // Let Cesium's native tile selection logic run unimpeded
-        console.log('🎯 TILE SELECTION: Using native Cesium algorithms without interference');
+        // Add focused logging to understand tile selection decisions
+        this.hookTileSelectionLogging();
+        this.hookCanTraverseLogging();
+        
+        console.log('🎯 TILE SELECTION: Adding debug hooks to understand selection logic');
         
         // Look for other BaseTraversal internal functions
         Object.getOwnPropertyNames(Cesium).forEach(key => {
@@ -1665,6 +1789,249 @@ export class SimpleIntegration {
                 }
             }
         });
+    }
+    
+    /**
+     * DEBUG: Hook tile selection decisions to understand why children aren't selected
+     */
+    private hookTileSelectionLogging(): void {
+        // Look for BaseTraversal or Cesium3DTilesetBaseTraversal
+        const traversalKeys = Object.getOwnPropertyNames(Cesium).filter(key => 
+            key.includes('BaseTraversal') || key.includes('Traversal')
+        );
+        
+        console.log('🔍 Found traversal classes:', traversalKeys);
+        
+        // Try to hook into BaseTraversal's selectTile method if available
+        traversalKeys.forEach(key => {
+            const TraversalClass = (Cesium as any)[key];
+            if (TraversalClass && TraversalClass.prototype) {
+                const prototype = TraversalClass.prototype;
+                
+                // Look for selection-related methods
+                Object.getOwnPropertyNames(prototype).forEach(methodName => {
+                    if (methodName.includes('select') || methodName.includes('visit') || methodName.includes('execute')) {
+                        console.log(`   Found ${key}.prototype.${methodName}`);
+                        
+                        // Hook selectTile method specifically
+                        if (methodName === 'selectTile' || methodName === 'visitTile') {
+                            const originalMethod = prototype[methodName];
+                            if (typeof originalMethod === 'function') {
+                                prototype[methodName] = function(tile: any, frameState: any) {
+                                    // Only log for tiles with ready children that aren't selected
+                                    if (tile && tile.children && tile.children.length > 0) {
+                                        const readyChildren = tile.children.filter((child: any) => 
+                                            child.contentReady && child.contentAvailable
+                                        );
+                                        
+                                        if (readyChildren.length > 0 && tile.refine === 1) { // REPLACE
+                                            console.log(`🎯 ${key}.${methodName}() DECISION:`, {
+                                                tileDepth: tile._depth,
+                                                refine: tile.refine === 1 ? 'REPLACE' : 'ADD',
+                                                readyChildrenCount: readyChildren.length,
+                                                totalChildrenCount: tile.children.length,
+                                                parentSelected: tile._selectedFrame === frameState.frameNumber,
+                                                parentVisible: tile.isVisible
+                                            });
+                                        }
+                                    }
+                                    
+                                    const result = originalMethod.call(this, tile, frameState);
+                                    return result;
+                                };
+                                
+                                console.log(`✅ Hooked ${key}.prototype.${methodName}()`);
+                            }
+                        }
+                    }
+                });
+            }
+        });
+    }
+    
+    /**
+     * Monitor Cesium's native memoryAdjustedScreenSpaceError behavior
+     */
+    private monitorMemoryAdjustedSSE(): void {
+        if (!this.cesiumTileset) return;
+        
+        const currentSSE = this.cesiumTileset.memoryAdjustedScreenSpaceError;
+        const maxSSE = this.cesiumTileset.maximumScreenSpaceError;
+        const stats = this.cesiumTileset.statistics;
+        
+        console.log('🎯 CESIUM NATIVE SSE MONITORING:');
+        console.log('   Current Values:', {
+            memoryAdjustedSSE: currentSSE,
+            maximumSSE: maxSSE,
+            ratio: `${((currentSSE / maxSSE) * 100).toFixed(1)}% of maximum`,
+            trend: currentSSE === maxSSE ? 'At baseline' : currentSSE > maxSSE ? 'Increased (less detail)' : 'Decreased (more detail)',
+            expectedBehavior: 'Should decrease with low memory usage via Cesium\'s decreaseScreenSpaceError()'
+        });
+        
+        // Check memory conditions that should trigger Cesium's native decrease
+        if (stats) {
+            const geometryMB = (stats.geometryByteLength || 0) / 1024 / 1024;
+            const texturesMB = (stats.texturesByteLength || 0) / 1024 / 1024;
+            const totalMB = geometryMB + texturesMB;
+            const cacheLimitMB = this.cesiumTileset.cacheBytes / 1024 / 1024;
+            const totalMemoryUsageInBytes = (geometryMB + texturesMB) * 1024 * 1024;
+            
+            const shouldDecrease = totalMemoryUsageInBytes < this.cesiumTileset.cacheBytes;
+            
+            console.log('   Cesium Memory Logic:', {
+                totalMemoryUsageInBytes: totalMemoryUsageInBytes.toFixed(0),
+                cacheBytes: this.cesiumTileset.cacheBytes,
+                condition: `${totalMemoryUsageInBytes.toFixed(0)} < ${this.cesiumTileset.cacheBytes}`,
+                shouldCallDecrease: shouldDecrease ? '✅ YES' : '❌ NO',
+                expectedSSEChange: shouldDecrease ? 'Should decrease for more detail' : 'Should stay same or increase'
+            });
+            
+            if (shouldDecrease && currentSSE === maxSSE) {
+                console.log('   🚨 CESIUM ISSUE: Memory condition met but SSE not decreased');
+                console.log('      This suggests decreaseScreenSpaceError() is not being called properly');
+                console.log('      ROOT CAUSE: decreaseScreenSpaceError() only called from processTiles() when tiles are in _processingQueue');
+                console.log('      DIAGNOSIS: Need to check if tiles are reaching PROCESSING state');
+            } else if (shouldDecrease && currentSSE < maxSSE) {
+                console.log('   ✅ CESIUM WORKING: SSE has been decreased as expected');
+            }
+        }
+        
+        // Show the actual traversal condition
+        const root = this.cesiumTileset.root;
+        if (root && root._screenSpaceError !== undefined) {
+            const rootSSE = root._screenSpaceError;
+            console.log('   Traversal Decision:', {
+                rootSSE: rootSSE.toFixed(2),
+                threshold: currentSSE.toFixed(2),
+                canTraverseRoot: rootSSE > currentSSE ? '✅ Can traverse deeper' : '🚫 Blocked at root',
+                comparison: `${rootSSE.toFixed(2)} ${rootSSE > currentSSE ? '>' : '≤'} ${currentSSE.toFixed(2)}`
+            });
+            
+            // Check what the SSE would need to be for root to traverse
+            if (rootSSE <= currentSSE && rootSSE > 0) {
+                const neededSSE = rootSSE * 0.9; // 10% below root SSE
+                console.log(`      💡 To traverse root: need memoryAdjustedSSE < ${neededSSE.toFixed(2)}`);
+            }
+        }
+    }
+    
+    /**
+     * Hook canTraverse to debug traversal stopping conditions
+     */
+    private hookCanTraverseLogging(): void {
+        try {
+            const TraversalClass = (Cesium as any).Cesium3DTilesetTraversal;
+            if (!TraversalClass) {
+                console.warn('⚠️  Cesium3DTilesetTraversal class not found');
+                return;
+            }
+            
+            if (!TraversalClass.canTraverse) {
+                console.warn('⚠️  Cesium3DTilesetTraversal.canTraverse method not found');
+                console.log('Available methods:', Object.getOwnPropertyNames(TraversalClass));
+                return;
+            }
+            
+            console.log('🔧 Hooking Cesium3DTilesetTraversal.canTraverse...');
+            const originalCanTraverse = TraversalClass.canTraverse;
+            let logCount = 0;
+            
+            TraversalClass.canTraverse = function(tile: any) {
+                const result = originalCanTraverse(tile);
+                
+                // Only log when traversal is blocked for tiles with children (limit to first 10 logs)
+                if (!result && tile.children && tile.children.length > 0 && logCount < 10) {
+                    logCount++;
+                    const tileset = tile.tileset;
+                    const sse = tile._screenSpaceError || 0;
+                    const threshold = tileset?.memoryAdjustedScreenSpaceError || tileset?.maximumScreenSpaceError || 16;
+                    
+                    console.log(`🚫 TRAVERSAL STOPPED: depth ${tile._depth}`, {
+                        reason: tile.children.length === 0 ? 'No children' : 
+                               tile.hasTilesetContent || tile.hasImplicitContent ? 'External/implicit content' :
+                               tile.contentExpired ? 'Content expired' :
+                               'SSE too small',
+                        tileSSE: sse.toFixed(2),
+                        threshold: threshold.toFixed(2),
+                        sseComparison: `${sse.toFixed(2)} ${sse > threshold ? '>' : '≤'} ${threshold.toFixed(2)}`,
+                        blocked: sse <= threshold,
+                        childrenCount: tile.children.length,
+                        geometricError: tile.geometricError,
+                        boundingSphereRadius: tile.boundingSphere?.radius?.toFixed(0) || 'unknown',
+                        distanceToCamera: tile._distanceToCamera?.toFixed(2) || 'unknown'
+                    });
+                    
+                    if (sse <= threshold) {
+                        console.log(`   💡 BLOCKING REASON: SSE ${sse.toFixed(2)} ≤ threshold ${threshold.toFixed(2)}`);
+                        console.log(`   🎯 EXPECTED: With maximumScreenSpaceError=16, tiles with SSE > 16 should traverse`);
+                    }
+                }
+                
+                return result;
+            };
+            
+            console.log('✅ Successfully hooked Cesium3DTilesetTraversal.canTraverse()');
+        
+        // ALSO HOOK processTiles to see if it's being called
+        this.hookProcessTiles();
+        } catch (error) {
+            console.error('❌ Failed to hook canTraverse:', error);
+        }
+    }
+    
+    /**
+     * Hook processTiles to debug why decreaseScreenSpaceError isn't being called
+     */
+    private hookProcessTiles(): void {
+        try {
+            // Find processTiles function in the global Cesium object or tileset
+            const tilesetPrototype = (this.cesiumTileset as any).__proto__;
+            
+            // Look for the update method that calls processTiles
+            if (tilesetPrototype && typeof tilesetPrototype.update === 'function') {
+                console.log('🔧 Hooking Cesium3DTileset.update() to monitor processTiles calls...');
+                
+                const originalUpdate = tilesetPrototype.update;
+                let processTilesCallCount = 0;
+                
+                tilesetPrototype.update = function(frameState: any) {
+                    const beforeProcessing = this._processingQueue?.length || 0;
+                    const beforeMemory = this.totalMemoryUsageInBytes || 0;
+                    
+                    const result = originalUpdate.call(this, frameState);
+                    
+                    const afterProcessing = this._processingQueue?.length || 0;
+                    const afterMemory = this.totalMemoryUsageInBytes || 0;
+                    
+                    processTilesCallCount++;
+                    
+                    // Only log every 60 frames (1 second at 60fps) and when interesting stuff happens
+                    if (processTilesCallCount % 60 === 0 || beforeProcessing !== afterProcessing || beforeMemory !== afterMemory) {
+                        console.log(`🔄 TILESET.UPDATE() #${processTilesCallCount}:`, {
+                            processingQueue: `${beforeProcessing} → ${afterProcessing}`,
+                            memoryUsage: `${beforeMemory} → ${afterMemory} bytes`,
+                            cacheBytes: this.cacheBytes,
+                            memoryCondition: afterMemory < this.cacheBytes ? 'Should decrease SSE' : 'Should increase/maintain SSE',
+                            currentSSE: this.memoryAdjustedScreenSpaceError,
+                            maxSSE: this.maximumScreenSpaceError
+                        });
+                        
+                        if (beforeProcessing === 0 && afterProcessing === 0) {
+                            console.log('   🚨 NO TILES IN PROCESSING QUEUE - processTiles() will not call decreaseScreenSpaceError()');
+                            console.log('   💡 Need tiles to be in PROCESSING state for memory management to work');
+                        }
+                    }
+                    
+                    return result;
+                };
+                
+                console.log('✅ Successfully hooked Cesium3DTileset.update()');
+            } else {
+                console.warn('⚠️  Cannot find Cesium3DTileset.update() method to hook');
+            }
+        } catch (error) {
+            console.error('❌ Failed to hook processTiles:', error);
+        }
     }
     
     /**
@@ -1713,7 +2080,175 @@ export class SimpleIntegration {
         });
     }
     
+    /**
+     * DEBUG: Analyze cache and memory limits to see if they're preventing tile loading
+     */
+    private analyzeCacheAndMemoryLimits(): void {
+        if (!this.cesiumTileset) return;
+        
+        const stats = this.cesiumTileset.statistics;
+        const cache = this.cesiumTileset._cache;
+        
+        console.log('💾 CACHE & MEMORY ANALYSIS:');
+        
+        // Cache configuration
+        console.log('   Cache Config:', {
+            cacheBytes: this.cesiumTileset.cacheBytes,
+            maximumCacheOverflowBytes: this.cesiumTileset.maximumCacheOverflowBytes,
+            totalAllowedMemory: `${((this.cesiumTileset.cacheBytes + this.cesiumTileset.maximumCacheOverflowBytes) / 1024 / 1024 / 1024).toFixed(1)}GB`
+        });
+        
+        // Current usage
+        if (stats) {
+            const geometryMB = (stats.geometryByteLength || 0) / 1024 / 1024;
+            const texturesMB = (stats.texturesByteLength || 0) / 1024 / 1024;
+            const totalMB = geometryMB + texturesMB;
+            const cacheLimitMB = this.cesiumTileset.cacheBytes / 1024 / 1024;
+            const usagePercent = (totalMB / cacheLimitMB) * 100;
+            
+            console.log('   Current Usage:', {
+                geometryMB: geometryMB.toFixed(1),
+                texturesMB: texturesMB.toFixed(1),
+                totalMB: totalMB.toFixed(1),
+                cacheLimitMB: cacheLimitMB.toFixed(1),
+                usagePercent: `${usagePercent.toFixed(1)}%`,
+                nearLimit: usagePercent > 80 ? '🚨 YES' : '✅ NO'
+            });
+        }
+        
+        // Cache statistics
+        if (cache) {
+            console.log('   Cache Internal:', {
+                trimTilesDuringTraversal: this.cesiumTileset.trimTilesDuringTraversal,
+                maximumScreenSpaceError: this.cesiumTileset.maximumScreenSpaceError,
+                skipLevelOfDetail: this.cesiumTileset.skipLevelOfDetail,
+                immediatelyLoadDesiredLevelOfDetail: this.cesiumTileset.immediatelyLoadDesiredLevelOfDetail
+            });
+        }
+        
+        // Memory pressure indicators
+        const memoryPressureIndicators = {
+            noNewRequests: (this.cesiumTileset.statistics?.numberOfPendingRequests || 0) === 0,
+            stallsAtCurrentDetail: (this.cesiumTileset.statistics?.numberOfTilesWithContentReady || 0) === 56,
+            lowTileCount: (this.cesiumTileset.statistics?.numberOfTilesWithContentReady || 0) < 100
+        };
+        
+        const hasPressure = Object.values(memoryPressureIndicators).some(Boolean);
+        console.log('   Memory Pressure:', {
+            ...memoryPressureIndicators,
+            overallPressure: hasPressure ? '🚨 DETECTED' : '✅ NONE'
+        });
+        
+        // Specific Google 3D Tiles expectations
+        console.log('   Google Tiles Expected:', {
+            expectedTileCount: '500-2000+ for NYC detail',
+            actualTileCount: this.cesiumTileset.statistics?.numberOfTilesWithContentReady || 0,
+            expectedDepthRange: '15+ levels for photorealistic detail',
+            currentMaxDepth: 'Unknown - need traversal analysis',
+            suspiciouslyLow: (this.cesiumTileset.statistics?.numberOfTilesWithContentReady || 0) < 200 ? '🚨 YES' : '✅ NO'
+        });
+    }
     
+    /**
+     * DEBUG: Analyze Google tiles loading patterns to understand why loading stops at 56 tiles
+     */
+    private analyzeGoogleTilesLoadingPattern(root: any): void {
+        console.log('🌍 GOOGLE TILES LOADING PATTERN ANALYSIS:');
+        
+        // Count tiles by depth
+        const tilesByDepth: { [depth: number]: { total: number, ready: number, selected: number } } = {};
+        let totalTilesInHierarchy = 0;
+        let totalReadyTiles = 0;
+        let maxDepthFound = 0;
+        
+        const analyzeTile = (tile: any, depth: number = 0) => {
+            totalTilesInHierarchy++;
+            maxDepthFound = Math.max(maxDepthFound, depth);
+            
+            if (!tilesByDepth[depth]) {
+                tilesByDepth[depth] = { total: 0, ready: 0, selected: 0 };
+            }
+            tilesByDepth[depth].total++;
+            
+            if (tile.contentReady || tile.contentAvailable) {
+                tilesByDepth[depth].ready++;
+                totalReadyTiles++;
+            }
+            
+            const selectedTiles = (this.cesiumTileset as any)._selectedTiles || [];
+            if (selectedTiles.includes(tile)) {
+                tilesByDepth[depth].selected++;
+            }
+            
+            // Recursively analyze children
+            if (tile.children && tile.children.length > 0) {
+                tile.children.forEach((child: any) => analyzeTile(child, depth + 1));
+            }
+        };
+        
+        if (root) {
+            analyzeTile(root);
+        }
+        
+        console.log('   Depth Analysis:', Object.keys(tilesByDepth).map(depth => {
+            const d = parseInt(depth);
+            const data = tilesByDepth[d];
+            return `D${d}: ${data.ready}/${data.total} ready, ${data.selected} selected`;
+        }).join(' | '));
+        
+        console.log('   Overall Stats:', {
+            maxDepthInHierarchy: maxDepthFound,
+            totalTilesInHierarchy,
+            totalReadyTiles,
+            readyPercentage: `${((totalReadyTiles / totalTilesInHierarchy) * 100).toFixed(1)}%`,
+            expectedForNYC: '2000+ tiles for photorealistic detail',
+            actualVsExpected: totalTilesInHierarchy < 200 ? '🚨 MUCH LOWER THAN EXPECTED' : '✅ REASONABLE'
+        });
+        
+        // Look for bottlenecks
+        const bottlenecks = [];
+        
+        if (maxDepthFound < 10) {
+            bottlenecks.push('📏 Shallow hierarchy - only ' + maxDepthFound + ' levels (expected 15+)');
+        }
+        
+        if (totalTilesInHierarchy < 100) {
+            bottlenecks.push('📦 Low tile count - only ' + totalTilesInHierarchy + ' tiles discovered');
+        }
+        
+        if (totalReadyTiles === 56 && (this.cesiumTileset?.statistics?.numberOfPendingRequests || 0) === 0) {
+            bottlenecks.push('🛑 Loading stalled - no new requests despite low tile count');
+        }
+        
+        // Check if children exist but aren't being requested
+        let tilesWithUnrequestedChildren = 0;
+        const checkUnrequestedChildren = (tile: any) => {
+            if (tile.children && tile.children.length > 0) {
+                const unrequestedChildren = tile.children.filter((child: any) => 
+                    !child.contentReady && !child.contentAvailable && child._contentState === 0 // UNLOADED
+                );
+                if (unrequestedChildren.length > 0) {
+                    tilesWithUnrequestedChildren++;
+                }
+                tile.children.forEach(checkUnrequestedChildren);
+            }
+        };
+        
+        if (root) {
+            checkUnrequestedChildren(root);
+        }
+        
+        if (tilesWithUnrequestedChildren > 0) {
+            bottlenecks.push(`🔄 ${tilesWithUnrequestedChildren} tiles have unloaded children that could be requested`);
+        }
+        
+        if (bottlenecks.length > 0) {
+            console.log('   🚨 LOADING BOTTLENECKS DETECTED:');
+            bottlenecks.forEach(bottleneck => console.log('     ' + bottleneck));
+        } else {
+            console.log('   ✅ No obvious loading bottlenecks detected');
+        }
+    }
     
     /**
      * Monitor tile selection for parent hiding issues
@@ -2546,6 +3081,55 @@ export class SimpleIntegration {
                     console.log(`     ... and ${selectedTiles.length - 3} more tiles`);
                 }
             }
+        }
+    }
+    
+    /**
+     * Manually trigger Cesium's decreaseScreenSpaceError() function
+     * This tests if reducing SSE threshold allows deeper traversal
+     */
+    manuallyDecreaseSSE(): void {
+        if (!this.cesiumTileset) {
+            console.log('❌ No tileset loaded');
+            return;
+        }
+        
+        const currentSSE = this.cesiumTileset.maximumScreenSpaceError;
+        console.log(`🎛️ MANUAL SSE DECREASE: Current maximumScreenSpaceError = ${currentSSE}`);
+        
+        try {
+            // Call Cesium's native decreaseScreenSpaceError function
+            if (typeof (this.cesiumTileset as any).decreaseScreenSpaceError === 'function') {
+                (this.cesiumTileset as any).decreaseScreenSpaceError();
+                const newSSE = this.cesiumTileset.maximumScreenSpaceError;
+                console.log(`   ✅ DECREASED: ${currentSSE} → ${newSSE} (${((currentSSE - newSSE) / currentSSE * 100).toFixed(1)}% reduction)`);
+                
+                // Log what this should enable
+                console.log(`   🎯 EXPECTED RESULT: Tiles with SSE > ${newSSE} should now traverse`);
+                console.log(`   📊 DEPTH 3 TILES: Those with SSE ~15.92 should traverse if threshold < 15.92`);
+                
+            } else {
+                console.log('   ❌ decreaseScreenSpaceError method not found on tileset');
+                
+                // Try alternative: manually reduce maximumScreenSpaceError
+                const newSSE = currentSSE * 0.5; // Halve the threshold
+                this.cesiumTileset.maximumScreenSpaceError = newSSE;
+                console.log(`   🔧 MANUAL FALLBACK: Set maximumScreenSpaceError = ${newSSE}`);
+            }
+            
+            // Force a tileset update to apply the new SSE
+            const frameState = {
+                frameNumber: this.frameCount,
+                camera: this.createCesiumCamera(),
+                time: new Date(),
+                commandList: [],
+                cullingVolume: null
+            };
+            
+            console.log(`   🔄 FORCING UPDATE: Next frame will use new SSE threshold`);
+            
+        } catch (error) {
+            console.error('❌ Error calling decreaseScreenSpaceError:', error);
         }
     }
     

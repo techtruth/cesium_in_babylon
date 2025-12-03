@@ -6,16 +6,16 @@
  * Based on Cesium's official Google 3D Tiles integration
  */
 export const GOOGLE_3D_TILES_CONFIG = {
-    // Core settings matching Cesium's Google 3D Tiles
-    maximumScreenSpaceError: 16,  // Cesium default for Google 3D Tiles
+    // CESIUM NATIVE GOOGLE 3D TILES CONFIG: Match createGooglePhotorealistic3DTileset exactly
+    maximumScreenSpaceError: 16,  // Cesium default for Google tiles
     maximumNumberOfLoadedTiles: 1000,
     
-    // Memory management (Cesium defaults)
-    cacheBytes: 536870912, // 512 MB
-    maximumCacheOverflowBytes: 536870912, // 512 MB additional
+    // Memory management - MATCH CESIUM'S GOOGLE TILES DEFAULTS
+    cacheBytes: 1610612736,          // 1.5 GB (Cesium's Google tiles default)
+    maximumCacheOverflowBytes: 1073741824, // 1 GB (Cesium's Google tiles default)
     
-    // LOD settings for Google's high-detail tiles
-    skipLevelOfDetail: false,  // Google tiles have proper hierarchy
+    // LOD settings - USE CESIUM DEFAULTS (no skipLevelOfDetail for Google tiles)
+    skipLevelOfDetail: false,  // Cesium does NOT use skipLevelOfDetail for Google tiles
     baseScreenSpaceError: 1024,
     skipScreenSpaceErrorFactor: 16,
     skipLevels: 1,

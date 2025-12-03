@@ -108,25 +108,26 @@ window.addEventListener('DOMContentLoaded', async () => {
     try {
         // Loading 3D Tiles
         
-        // Try loading Moon tileset from Cesium Ion
+        // Try loading Google Photorealistic 3D Tiles
         try {
             
-            // Moon tileset asset ID from Cesium Ion
-            await integration.loadCesiumIonAsset(2684829, 'Moon Tileset');
-            // Moon Tileset loaded
+            // Switch back to Google Earth tiles to test REPLACE refinement with real data
+            // Mars Ion Asset ID 3644333
+            await integration.loadCesiumIonAsset(3644333, 'Mars 3D Tiles');
+            // Mars 3D Tiles loaded
             
-            // Calculate Moon surface coordinates - use lunar ellipsoid
-            // Moon center: 0° N, 0° W (lunar equator and prime meridian)
-            const moonLat = 0 * Math.PI / 180;  // Equator
-            const moonLon = 0 * Math.PI / 180;  // Prime meridian
-            const surfaceAltitude = 0; // Moon surface
-            const cameraAltitude = 15000; // 15km above surface
+            // Calculate coordinates for Mars surface viewing
+            // Use Mars coordinates - example location on Mars surface
+            const marsLat = 0.0 * Math.PI / 180; // Equator
+            const marsLon = 0.0 * Math.PI / 180; // Prime meridian
+            const surfaceAltitude = 0; // Sea level
+            const cameraAltitude = 1000; // 1km above surface - TEST: Much lower to increase SSE
             
             console.log('📐 COORDINATE SETUP:', {
-                latDegrees: 0,
-                lonDegrees: 0,
-                latRadians: moonLat,
-                lonRadians: moonLon,
+                latDegrees: 0.0,
+                lonDegrees: 0.0,
+                latRadians: marsLat,
+                lonRadians: marsLon,
                 surfaceAltitude,
                 cameraAltitude
             });
@@ -136,40 +137,40 @@ window.addEventListener('DOMContentLoaded', async () => {
             
             // Silent coordinate transformation - logging removed to reduce console spam
             
-            // Get positions using Moon ellipsoid (assuming spherical for simplicity)
-            const moonSurfaceCesium = CesiumCartesian3.fromRadians(moonLon, moonLat, surfaceAltitude);
-            const cameraPositionCesium = CesiumCartesian3.fromRadians(moonLon, moonLat, cameraAltitude);
+            // Get positions using Mars ellipsoid
+            const marsSurfaceCesium = CesiumCartesian3.fromRadians(marsLon, marsLat, surfaceAltitude, Ellipsoid.MARS);
+            const cameraPositionCesium = CesiumCartesian3.fromRadians(marsLon, marsLat, cameraAltitude, Ellipsoid.MARS);
             
-            console.log('🌙 MOON COORDINATES DEBUG:');
-            console.log(`   Lat/Lon: ${0}°, ${0}° (${moonLat.toFixed(6)}, ${moonLon.toFixed(6)} radians)`);
+            console.log('🔴 MARS COORDINATES DEBUG:');
+            console.log(`   Lat/Lon: ${0.0}°, ${0.0}° (${marsLat.toFixed(6)}, ${marsLon.toFixed(6)} radians)`);
             console.log(`   Original Cesium ECEF camera: (${cameraPositionCesium.x.toFixed(0)}, ${cameraPositionCesium.y.toFixed(0)}, ${cameraPositionCesium.z.toFixed(0)})`);
             console.log(`   → Babylon camera position: (${cameraPositionCesium.x.toFixed(0)}, ${cameraPositionCesium.z.toFixed(0)}, ${cameraPositionCesium.y.toFixed(0)})`);
             console.log(`   EXPECTATION: simpleIntegration should send back the original ECEF coordinates`);
             
             // Store for reference
-            (window as any).originalMoonEcef = cameraPositionCesium;
+            (window as any).originalMarsEcef = cameraPositionCesium;
             
             // ECEF → BABYLON: Coordinate system alignment transform (X, Y, Z) → (X, Z, -Y)
-            // Aligns Cesium Moon-centered coordinates to Babylon view-centered coordinates
-            const moonSurface = new Vector3(moonSurfaceCesium.x, moonSurfaceCesium.z, -moonSurfaceCesium.y);
+            // Aligns Cesium Mars-centered coordinates to Babylon view-centered coordinates
+            const marsSurface = new Vector3(marsSurfaceCesium.x, marsSurfaceCesium.z, -marsSurfaceCesium.y);
             const cameraPosition = new Vector3(cameraPositionCesium.x, cameraPositionCesium.z, -cameraPositionCesium.y);
             
             // Coordinate system alignment: Cesium ECEF → Babylon view-centered
             console.log('📍 BABYLON CAMERA POSITIONING:', {
-                moonSurfaceBabylon: { x: moonSurface.x, y: moonSurface.y, z: moonSurface.z },
+                marsSurfaceBabylon: { x: marsSurface.x, y: marsSurface.y, z: marsSurface.z },
                 cameraPositionBabylon: { x: cameraPosition.x, y: cameraPosition.y, z: cameraPosition.z },
-                distanceFromSurface: Vector3.Distance(cameraPosition, moonSurface),
+                distanceFromSurface: Vector3.Distance(cameraPosition, marsSurface),
                 expectedDistance: cameraAltitude
             });
             
-            // Store Moon surface coordinates for spacebar functionality
-            const moonSurfaceForFrameState = moonSurfaceCesium;
+            // Store Mars surface coordinates for spacebar functionality
+            const marsSurfaceForFrameState = marsSurfaceCesium;
             
-            // Set camera position and look down at Moon surface
+            // Set camera position and look down at Mars surface
             camera.position = cameraPosition;
-            camera.setTarget(moonSurface);
+            camera.setTarget(marsSurface);
             
-            // Camera positioned and targeted at Moon
+            // Camera positioned and targeted at Mars surface
             
             // Add keyboard controls
             window.addEventListener('keydown', (event) => {
@@ -209,6 +210,9 @@ window.addEventListener('DOMContentLoaded', async () => {
                 } else if (key === 'f' || key === 'F') {
                     // F key: Toggle frustum wireframe visibility
                     integration.toggleFrustumWireframe();
+                } else if (key === 'm' || key === 'M') {
+                    // M key: Manually trigger Cesium's decreaseScreenSpaceError()
+                    integration.manuallyDecreaseSSE();
                 }
             });
             

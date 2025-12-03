@@ -30,7 +30,8 @@ export class SimpleBabylonTileContent {
     private async loadContent(gltfData: Uint8Array): Promise<void> {
         try {
             if (!gltfData || gltfData.length === 0) {
-                        this._ready = true;
+                // NATIVE PATTERN: Don't set ready immediately - let update() handle it
+                // Empty content should still go through proper state transitions
                 return;
             }
 
@@ -65,15 +66,15 @@ export class SimpleBabylonTileContent {
             // DON'T apply here - let Cesium handle tile positioning through its normal pipeline
             this.storeCesiumTransform();
 
-
-            // Native pattern: simple ready state
-            this._ready = true;
+            // NATIVE PATTERN: Don't set _ready = true here!
+            // Native Model3DTileContent only sets ready in update() when model.ready is true
+            // This ensures proper LOADING → PROCESSING → READY state transitions
             
-            // Let Cesium recognize content automatically via its internal logic:
-            // - tile._content is assigned (done in factory methods)
-            // - content.ready returns true (done via our ready getter)
-            // - Cesium computes contentAvailable and hasRenderableContent based on these
-            // Quiet: content ready logs
+            // Let Cesium recognize content loading is complete via the factory promise resolution:
+            // - tile._content is assigned when factory promise resolves
+            // - content.ready will return true only when update() sets it
+            // - Cesium computes contentAvailable and hasRenderableContent based on these states
+            // Quiet: content loading complete, waiting for update() to set ready
 
             // Clean up object URL
             URL.revokeObjectURL(objectURL);
@@ -155,13 +156,10 @@ export class SimpleBabylonTileContent {
     }
 
     get ready(): boolean {
-        // Simple ready state - just return if we have loaded content
-        const isReady = this._ready && this._meshes && this._meshes.length > 0;
-        
-        // Quiet: console.log(`🔍 CONTENT.READY GETTER CALLED: depth=${this._tile._depth}, ready=${this._ready}, meshCount=${this._meshes?.length || 0}, result=${isReady}`);
-        // Quiet ready state logging
-        
-        return isReady;
+        // NATIVE CESIUM PATTERN: Return ready state directly
+        // Model3DTileContent.ready just returns this._ready
+        // Empty content (no meshes) can still be ready
+        return this._ready;
     }
 
 
@@ -293,9 +291,7 @@ export class SimpleBabylonTileContent {
         // If this method is called, the tile IS selected and should be visible - no conditional logic needed
         // This matches Model3DTileContent.js exactly: just update properties and call model.update()
         
-        if (!this._meshes || this._meshes.length === 0) {
-            return;
-        }
+        // Don't return early for empty content - it still needs ready state processing
 
         // Apply transform - equivalent to: model.modelMatrix = tile.computedTransform
         const transform = this._tile.computedTransform;
@@ -303,19 +299,36 @@ export class SimpleBabylonTileContent {
             this.applyTransformToMeshes(transform);
         }
 
-        // Handle ready state transition - equivalent to native pattern
-        if (!this._ready && this._meshes && this._meshes.length > 0) {
-            this._ready = true;
+        // NATIVE CESIUM PATTERN: Only set ready when content is truly ready
+        // Model3DTileContent: if (!this._ready && model.ready) { this._ready = true; }
+        if (!this._ready) {
+            if (!this._meshes || this._meshes.length === 0) {
+                // Empty content - mark as ready immediately (like empty tiles in Google 3D Tiles)
+                this._ready = true;
+                console.log(`✅ EMPTY CONTENT READY: Tile depth ${this._tile._depth} - no renderable content`);
+            } else {
+                // Content with meshes - ensure meshes are properly loaded
+                const meshesLoaded = this._meshes.every(mesh => mesh.isReady && mesh.isReady());
+                if (meshesLoaded) {
+                    this._ready = true;
+                    console.log(`✅ CONTENT READY: Tile depth ${this._tile._depth} - ${this._meshes.length} meshes loaded and ready`);
+                } else {
+                    // Content is still loading - stay in PROCESSING state
+                    console.log(`⏳ PROCESSING: Tile depth ${this._tile._depth} - ${this._meshes.length} meshes loading...`);
+                }
+            }
         }
         
         // NATIVE CESIUM PATTERN: If update() is called, the tile is selected - show all meshes
         // Cesium handles hiding by NOT calling update() on unselected tiles
-        this._meshes.forEach((mesh, index) => {
-            if (!mesh.isEnabled()) {
-                mesh.setEnabled(true);
-                // Quiet: mesh enabled for selected tile
-            }
-        });
+        if (this._meshes && this._meshes.length > 0) {
+            this._meshes.forEach((mesh, index) => {
+                if (!mesh.isEnabled()) {
+                    mesh.setEnabled(true);
+                    // Quiet: mesh enabled for selected tile
+                }
+            });
+        }
         
         // Track when this tile was last updated (selected by Cesium)
         const frameNumber = frameState.frameNumber;
@@ -392,20 +405,16 @@ export class SimpleBabylonTileContent {
             const gltfByteLength = byteLength - (gltfOffset - byteOffset);
             const gltfData = new Uint8Array(arrayBuffer, gltfOffset, gltfByteLength);
 
+            // NATIVE CESIUM PATTERN: Async processing while factory method is active
+            // Cesium will assign tile._content when this promise resolves
             await content.loadContent(gltfData);
             
         } catch (error) {
             console.error('B3DM parsing failed:', error);
         }
         
-        // FIXED: Let Cesium handle state management naturally
-        // Only assign content - let Cesium manage states and processing queue
-        tile._content = content;
-        // Quiet: B3DM content assigned
-        
-        // REMOVED: Debug hooks that modified Cesium behavior
-        // Let Cesium handle tile processing naturally without interference
-        
+        // NATIVE PATTERN: Return content, let Cesium assign tile._content
+        // This allows proper LOADING → PROCESSING → READY state transitions
         return content;
     }
 
@@ -424,19 +433,15 @@ export class SimpleBabylonTileContent {
         
         try {
             const gltfData = new Uint8Array(gltf);
+            // NATIVE CESIUM PATTERN: Async processing while factory method is active
+            // Cesium will assign tile._content when this promise resolves
             await content.loadContent(gltfData);
         } catch (error) {
             console.error('GLB loading failed:', error);
         }
         
-        // FIXED: Let Cesium handle state management naturally
-        // Only assign content - let Cesium manage states and processing queue
-        tile._content = content;
-        // Quiet: content assigned
-        
-        // REMOVED: Debug hooks that modified Cesium behavior
-        // Let Cesium handle tile processing naturally without interference
-        
+        // NATIVE PATTERN: Return content, let Cesium assign tile._content
+        // This allows proper LOADING → PROCESSING → READY state transitions
         return content;
     }
 
