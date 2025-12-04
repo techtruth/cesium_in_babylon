@@ -1,3 +1,15 @@
+/**
+ * CesiumTilesetDerived.js - Customized Cesium3DTileset for Babylon.js Integration
+ * 
+ * Modified version of Cesium's native 3D Tileset class that works with Babylon.js:
+ * - Registers SimpleBabylonTileContent as the content factory for B3DM/GLB tiles
+ * - Bypasses WebGL context dependencies that conflict with Babylon.js
+ * - Maintains full 3D Tiles specification compliance and native performance
+ * - Handles all tile traversal, selection, culling, and LOD management via native Cesium algorithms
+ * 
+ * Note: Can be simplified if Cesium accepts PR to disable DynamicEnvironmentMapManager
+ */
+
 // BABYLON.JS: Import everything from cesium npm package instead of relative paths
 import * as Cesium from 'cesium';
 import { 

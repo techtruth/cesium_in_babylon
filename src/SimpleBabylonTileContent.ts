@@ -1,16 +1,18 @@
+/**
+ * SimpleBabylonTileContent.ts - Cesium-Compatible Tile Content Renderer
+ * 
+ * Babylon.js implementation of Cesium's tile content interface for rendering 3D Tiles.
+ * - Implements full Model3DTileContent API for seamless Cesium integration
+ * - Handles B3DM and GLB parsing with proper state transitions (LOADING→PROCESSING→READY)
+ * - Uses Babylon.js SceneLoader for glTF content rendering
+ * - Manages mesh visibility based on Cesium's tile selection algorithms
+ * - Provides geometry/texture statistics for Cesium's memory management
+ */
+
 import { Scene as BabylonScene, Matrix, Vector3 } from '@babylonjs/core';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
 import '@babylonjs/loaders/glTF';
 import * as Cesium from 'cesium';
-
-/**
- * SimpleBabylonTileContent - Following Cesium's Model3DTileContent pattern EXACTLY
- * 
- * This follows the exact same static factory pattern as Cesium's Model3DTileContent.js:
- * - Static async factory methods (fromB3dm, fromGltf)  
- * - Constructor takes (tileset, tile, resource)
- * - Proper content parsing for B3DM and GLB formats
- */
 export class SimpleBabylonTileContent {
     private _tileset: any;
     private _tile: any;
@@ -55,7 +57,6 @@ export class SimpleBabylonTileContent {
                 // REMOVED: mesh.material.useLogarithmicDepth = true; - was causing depth issues
                 // Hide mesh until Cesium decides it should be visible
                 mesh.setEnabled(false);
-                // Quiet: mesh loaded
             });
 
             // Store meshes for cleanup
@@ -74,7 +75,6 @@ export class SimpleBabylonTileContent {
             // - tile._content is assigned when factory promise resolves
             // - content.ready will return true only when update() sets it
             // - Cesium computes contentAvailable and hasRenderableContent based on these states
-            // Quiet: content loading complete, waiting for update() to set ready
 
             // Clean up object URL
             URL.revokeObjectURL(objectURL);
@@ -305,16 +305,13 @@ export class SimpleBabylonTileContent {
             if (!this._meshes || this._meshes.length === 0) {
                 // Empty content - mark as ready immediately (like empty tiles in Google 3D Tiles)
                 this._ready = true;
-                // Empty content ready - logging silently to reduce console spam
             } else {
                 // Content with meshes - ensure meshes are properly loaded
                 const meshesLoaded = this._meshes.every(mesh => mesh.isReady && mesh.isReady());
                 if (meshesLoaded) {
                     this._ready = true;
-                    // Content ready - logging silently to reduce console spam
                 } else {
                     // Content is still loading - stay in PROCESSING state
-                    // Processing status logged silently to reduce console spam
                 }
             }
         }
@@ -325,7 +322,6 @@ export class SimpleBabylonTileContent {
             this._meshes.forEach((mesh, index) => {
                 if (!mesh.isEnabled()) {
                     mesh.setEnabled(true);
-                    // Quiet: mesh enabled for selected tile
                 }
             });
         }
@@ -474,7 +470,6 @@ export class SimpleBabylonTileContent {
             this._meshes.forEach((mesh, index) => {
                 if (mesh.isEnabled()) {
                     mesh.setEnabled(false);
-                    // Mesh hidden silently to reduce console spam
                 }
             });
         }
