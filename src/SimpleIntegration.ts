@@ -1,10 +1,24 @@
 import { Camera, Engine, Vector3, Matrix } from '@babylonjs/core';
-import * as Cesium from 'cesium';
+import {
+  Ion,
+  IonResource, 
+  Cartesian3,
+  Cartographic,
+  Ellipsoid,
+  PerspectiveFrustum,
+  SceneMode,
+  JulianDate,
+  GeographicProjection
+} from 'cesium';
+
+// Import internal Cesium classes that may not be publicly exported
+import * as CesiumInternal from 'cesium';
 
 import { SimpleBabylonTileContent } from './SimpleBabylonTileContent';
 
 //This can go away after PR to cesium is accepted
-import CesiumTilesetDerived from './cesium_derived/CesiumTilesetDerived.js';
+//import CesiumTilesetDerived from './cesium_derived/CesiumTilesetDerived.js';
+import CesiumTilesetDerived from './cesium_derived/Cesium3DTileset';
 
 import { DebugVisualization } from './DebugVisualization';
 
@@ -38,8 +52,8 @@ export class SimpleIntegration {
 
     // Set up Cesium Ion authentication using native Cesium
     // TODO: Update with your new Cesium Ion token from https://cesium.com/ion/tokens
-    Cesium.Ion.defaultAccessToken =
-      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI4ZWNjOTdkOS03ODQ2LTRiYzAtOGNiZC0yMmUwY2ZiOTM2M2MiLCJpZCI6MjIwODczLCJpYXQiOjE3NjQ2OTMxODh9.QlACQnWP4oWZCFQKuR2FXWw_KiLJwm9wsg6U6ynqIw4';
+    Ion.defaultAccessToken =
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI4OWQ5MDg2Mi02MDRmLTRhMWItYjZjZS1mMGE3YWI1MDAyOWYiLCJpZCI6MjIwODczLCJpYXQiOjE3NjQ4NjgxNDh9.Grk7U6JuiU7YNrP5bjCAsrifDqBJIxtQZF4Lf52ocMo';
 
     // BABYLON.JS: Set up proper Cesium content factory registration
     this.setupBabylonContentFactory();
@@ -49,8 +63,8 @@ export class SimpleIntegration {
 
     // Create reusable pass state exactly like Cesium Scene does
     // Access internal classes through Cesium namespace
-    const Cesium3DTilePassState = (Cesium as any).Cesium3DTilePassState;
-    const Cesium3DTilePass = (Cesium as any).Cesium3DTilePass;
+    const Cesium3DTilePassState = (CesiumInternal as any).Cesium3DTilePassState;
+    const Cesium3DTilePass = (CesiumInternal as any).Cesium3DTilePass;
 
     this.renderTilesetPassState = new Cesium3DTilePassState({
       pass: Cesium3DTilePass.RENDER,
@@ -72,26 +86,26 @@ export class SimpleIntegration {
     const babylonUp = this.camera.upVector || Vector3.Up();
 
     // Simple coordinate transformation: Babylon → Cesium ECEF
-    const position = new Cesium.Cartesian3(babylonPos.x, -babylonPos.z, babylonPos.y);
+    const position = new Cartesian3(babylonPos.x, -babylonPos.z, babylonPos.y);
 
     // Transform direction vector (from camera toward target)
-    const direction = new Cesium.Cartesian3(babylonDir.x, -babylonDir.z, babylonDir.y);
-    Cesium.Cartesian3.normalize(direction, direction);
+    const direction = new Cartesian3(babylonDir.x, -babylonDir.z, babylonDir.y);
+    Cartesian3.normalize(direction, direction);
 
-    const up = new Cesium.Cartesian3(babylonUp.x, -babylonUp.z, babylonUp.y);
-    Cesium.Cartesian3.normalize(up, up);
+    const up = new Cartesian3(babylonUp.x, -babylonUp.z, babylonUp.y);
+    Cartesian3.normalize(up, up);
 
     // Calculate right vector
-    const right = new Cesium.Cartesian3();
-    Cesium.Cartesian3.cross(direction, up, right);
-    Cesium.Cartesian3.normalize(right, right);
+    const right = new Cartesian3();
+    Cartesian3.cross(direction, up, right);
+    Cartesian3.normalize(right, right);
 
     // Recalculate up to ensure orthogonality
-    Cesium.Cartesian3.cross(right, direction, up);
-    Cesium.Cartesian3.normalize(up, up);
+    Cartesian3.cross(right, direction, up);
+    Cartesian3.normalize(up, up);
 
     // Create frustum
-    const frustum = new Cesium.PerspectiveFrustum({
+    const frustum = new PerspectiveFrustum({
       fov: this.camera.fov,
       aspectRatio: this.engine.getRenderWidth() / this.engine.getRenderHeight(),
       near: this.camera.minZ, // Now consistent: both use 0.1
@@ -99,9 +113,9 @@ export class SimpleIntegration {
     });
 
     // Calculate cartographic position for geographic reference
-    const positionCartographic = Cesium.Cartographic.fromCartesian(
+    const positionCartographic = Cartographic.fromCartesian(
       position,
-      Cesium.Ellipsoid.WGS84
+      Ellipsoid.WGS84
     );
 
     return {
@@ -134,11 +148,12 @@ export class SimpleIntegration {
   ): Promise<void> {
     try {
       // Use standard Cesium Ion asset loading
-      const resource = await Cesium.IonResource.fromAssetId(assetId);
+      const resource = await IonResource.fromAssetId(assetId);
 
       this.cesiumTileset = (await CesiumTilesetDerived.fromUrl(resource, {
         show: true,
         shadows: 1,
+        disableDynamicMapManager: true
       })) as CesiumTilesetDerived;
 
       await this.cesiumTileset.readyPromise;
@@ -201,14 +216,14 @@ export class SimpleIntegration {
         drawingBufferHeight: this.engine.getRenderHeight(),
       },
       cullingVolume: cullingVolume,
-      mode: Cesium.SceneMode.SCENE3D,
+      mode: SceneMode.SCENE3D,
       frameNumber: ++this.frameCount,
       // CRITICAL: Add JulianDate time for BaseTraversal tile prioritization
-      time: Cesium.JulianDate.now(),
+      time: JulianDate.now(),
       // CESIUM EXACT: newFrame flag - true only for actual new frames
       newFrame: this.frameCount !== this.lastFrameNumber,
       // CRITICAL: Add pass information that SkipTraversal needs
-      pass: (Cesium as any).Pass ? (Cesium as any).Pass.RENDER : 0,
+      pass: (CesiumInternal as any).Pass ? (CesiumInternal as any).Pass.RENDER : 0,
       // Let Cesium use its default maximumScreenSpaceError for Google tiles
       tilesetPassState: this.renderTilesetPassState, // Required by CesiumTilesetDerived
       // CREDIT DISPLAY: Add credits as HTML comments once
@@ -219,7 +234,7 @@ export class SimpleIntegration {
       },
       // Additional properties from working commit 72dfb2e:
       pixelRatio: 1.0,
-      mapProjection: new Cesium.GeographicProjection(),
+      mapProjection: new GeographicProjection(),
       verticalExaggeration: 1.0,
       verticalExaggerationRelativeHeight: 0.0,
       commandList: [],
@@ -233,12 +248,12 @@ export class SimpleIntegration {
     try {
       // Set up load timestamp if needed (from prePassesUpdate)
       if (!(this.cesiumTileset as any)._loadTimestamp) {
-        (this.cesiumTileset as any)._loadTimestamp = Cesium.JulianDate.clone(frameState.time);
+        (this.cesiumTileset as any)._loadTimestamp = JulianDate.clone(frameState.time);
       }
 
       // Calculate time since load (from prePassesUpdate)
       const timeSinceLoad = Math.max(
-        Cesium.JulianDate.secondsDifference(
+        JulianDate.secondsDifference(
           frameState.time,
           (this.cesiumTileset as any)._loadTimestamp
         ) * 1000,
@@ -279,7 +294,7 @@ export class SimpleIntegration {
    * BABYLON.JS: Set up proper Cesium content factory to create BabylonTileContent
    */
   private setupBabylonContentFactory(): void {
-    const Cesium3DTileContentFactory = (Cesium as any).Cesium3DTileContentFactory;
+    const Cesium3DTileContentFactory = (CesiumInternal as any).Cesium3DTileContentFactory;
     const babylonScene = this.camera.getScene();
 
     Cesium3DTileContentFactory.b3dm = function (
@@ -315,7 +330,7 @@ export class SimpleIntegration {
    * CRITICAL FIX: Optimize RequestScheduler for Google 3D Tiles massive tile hierarchy
    */
   private optimizeRequestSchedulerForGoogle3DTiles(): void {
-    const RequestScheduler = (Cesium as any).RequestScheduler;
+    const RequestScheduler = (CesiumInternal as any).RequestScheduler;
     if (!RequestScheduler) return;
 
     RequestScheduler.maximumRequests = 100;

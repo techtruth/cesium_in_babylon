@@ -1,4 +1,4 @@
-// Type declarations for CesiumTilesetDerived.js (native Cesium3DTileset)
+// Type declarations for NewTileset.js (native Cesium3DTileset)
 
 declare class Cesium3DTileset {
   constructor(options?: any);

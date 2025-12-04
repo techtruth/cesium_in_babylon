@@ -1,4 +1,5 @@
 import { Scene, MeshBuilder, StandardMaterial, Color3, Vector3 } from '@babylonjs/core';
+import { Ellipsoid } from 'cesium';
 
 export class DebugVisualization {
   private babylonScene: Scene;
@@ -7,6 +8,7 @@ export class DebugVisualization {
   private cameraUpdatePaused = false;
   private boundingVolumesVisible = false;
   private frustumVisible = false;
+  private referenceObjectsVisible = false;
 
   private frustumVisualization: any = null;
   private boundingVolumeWireframes: any[] = [];
@@ -17,6 +19,7 @@ export class DebugVisualization {
     this.babylonScene = babylonScene;
     this.cesiumTileset = cesiumTileset;
     this.setupKeyboardControls();
+    this.createReferenceObjects();
   }
 
   private setupKeyboardControls(): void {
@@ -33,6 +36,10 @@ export class DebugVisualization {
         case 'f':
           event.preventDefault();
           this.toggleFrustumVisibility();
+          break;
+        case 't':
+          event.preventDefault();
+          this.toggleReferenceObjectsVisibility();
           break;
       }
     });
@@ -67,6 +74,81 @@ export class DebugVisualization {
     } else {
       this.clearFrustumWireframes();
     }
+  }
+
+  private toggleReferenceObjectsVisibility(): void {
+    this.referenceObjectsVisible = !this.referenceObjectsVisible;
+    console.log(this.referenceObjectsVisible ? '🌍 Reference objects visible' : '🌍 Reference objects hidden');
+
+    // Find and toggle all reference objects
+    const referenceObjectNames = ['earthSphere', 'skyBarrier', 'centerSphere', 'northPole', 'southPole'];
+    
+    referenceObjectNames.forEach(name => {
+      const mesh = this.babylonScene.getMeshByName(name);
+      if (mesh) {
+        mesh.setEnabled(this.referenceObjectsVisible);
+      }
+    });
+  }
+
+  private createReferenceObjects(): void {
+    const marsRadius = Ellipsoid.MARS.maximumRadius; // Official Cesium Mars ellipsoid radius
+
+    // Mars sphere (hidden wireframe)
+    const marsSphere = MeshBuilder.CreateSphere(
+      'earthSphere',
+      { diameter: marsRadius * 2, segments: 64 },
+      this.babylonScene
+    );
+    marsSphere.position = Vector3.Zero();
+    marsSphere.setEnabled(false);
+    const marsMaterial = new StandardMaterial('earthMaterial', this.babylonScene);
+    marsMaterial.diffuseColor = new Color3(0.8, 0.4, 0.2); // Mars reddish color
+    marsMaterial.emissiveColor = new Color3(0.2, 0.1, 0.05);
+    marsMaterial.wireframe = true;
+    marsSphere.material = marsMaterial;
+
+    // Sky barrier (hidden) - scaled by 2x
+    const skyBarrierRadius = marsRadius * 2;
+    const skyBarrier = MeshBuilder.CreateSphere(
+      'skyBarrier',
+      { diameter: skyBarrierRadius * 2, segments: 32 },
+      this.babylonScene
+    );
+    skyBarrier.position = Vector3.Zero();
+    skyBarrier.setEnabled(false);
+    const skyMaterial = new StandardMaterial('skyMaterial', this.babylonScene);
+    skyMaterial.diffuseColor = new Color3(0.8, 0.2, 0.2);
+    skyMaterial.emissiveColor = new Color3(0.1, 0.05, 0.05);
+    skyMaterial.wireframe = true;
+    skyMaterial.alpha = 0.3;
+    skyBarrier.material = skyMaterial;
+
+    // Center reference sphere (green wireframe)
+    const centerSphere = MeshBuilder.CreateSphere('centerSphere', { diameter: 100000 }, this.babylonScene);
+    centerSphere.position = Vector3.Zero();
+    const centerMaterial = new StandardMaterial('centerMaterial', this.babylonScene);
+    centerMaterial.diffuseColor = new Color3(0, 1, 0);
+    centerMaterial.emissiveColor = new Color3(0, 0.5, 0);
+    centerMaterial.wireframe = true;
+    centerMaterial.backFaceCulling = false;
+    centerSphere.material = centerMaterial;
+
+    // North pole marker (white box)
+    const northPole = MeshBuilder.CreateBox('northPole', { size: 5000000 }, this.babylonScene);
+    northPole.position = new Vector3(0, 10000000, 0);
+    const northMaterial = new StandardMaterial('northMaterial', this.babylonScene);
+    northMaterial.diffuseColor = new Color3(1, 1, 1);
+    northMaterial.emissiveColor = new Color3(0.5, 0.5, 0.5);
+    northPole.material = northMaterial;
+
+    // South pole marker (blue box)
+    const southPole = MeshBuilder.CreateBox('southPole', { size: 5000000 }, this.babylonScene);
+    southPole.position = new Vector3(0, -10000000, 0);
+    const southMaterial = new StandardMaterial('southMaterial', this.babylonScene);
+    southMaterial.diffuseColor = new Color3(0, 0, 1);
+    southMaterial.emissiveColor = new Color3(0, 0, 0.5);
+    southPole.material = southMaterial;
   }
 
   updateVisualizations(camera: any, frameNumber: number): void {

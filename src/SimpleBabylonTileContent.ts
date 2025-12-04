@@ -33,6 +33,23 @@ export class SimpleBabylonTileContent {
 
       result.meshes.forEach((mesh) => {
         mesh.setEnabled(false);
+        
+        // Ensure all materials are fully opaque
+        if (mesh.material) {
+          if (mesh.material.alpha !== undefined) {
+            mesh.material.alpha = 1.0;
+          }
+          if (mesh.material.transparencyMode !== undefined) {
+            mesh.material.transparencyMode = 0; // OPAQUE mode
+          }
+          // For PBR materials
+          if (mesh.material.baseColor && mesh.material.baseColor.a !== undefined) {
+            mesh.material.baseColor.a = 1.0;
+          }
+          if (mesh.material.albedoColor && mesh.material.albedoColor.a !== undefined) {
+            mesh.material.albedoColor.a = 1.0;
+          }
+        }
       });
 
       this._meshes = result.meshes;
