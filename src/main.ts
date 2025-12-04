@@ -19,7 +19,7 @@ import {
   StandardMaterial,
   Color3,
 } from '@babylonjs/core';
-import { SimpleIntegration } from './simpleIntegration';
+import { SimpleIntegration } from './SimpleIntegration';
 import { Cartesian3 as CesiumCartesian3, Ellipsoid } from 'cesium';
 
 window.addEventListener('DOMContentLoaded', async () => {

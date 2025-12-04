@@ -20,6 +20,16 @@ export class SimpleIntegration {
   private frameCount: number = 0;
   private lastFrameNumber: number = 0;
   private debugVisualization: DebugVisualization;
+  private addedCredits: Set<string> = new Set();
+
+  private addCreditToHTML(credit: any): void {
+    const creditText = credit.text || credit.html || credit.toString();
+    if (creditText && !this.addedCredits.has(creditText)) {
+      this.addedCredits.add(creditText);
+      const comment = document.createComment(` Credit: ${creditText} `);
+      document.head.appendChild(comment);
+    }
+  }
 
   constructor(babylonScene: any, camera: Camera, engine: Engine) {
     this.camera = camera;
@@ -201,10 +211,10 @@ export class SimpleIntegration {
       pass: (Cesium as any).Pass ? (Cesium as any).Pass.RENDER : 0,
       // Let Cesium use its default maximumScreenSpaceError for Google tiles
       tilesetPassState: this.renderTilesetPassState, // Required by CesiumTilesetDerived
-      // CREDIT DISPLAY: Disabled to prevent image downloads
+      // CREDIT DISPLAY: Add credits as HTML comments once
       creditDisplay: {
-        addCreditToNextFrame: (_credit: any) => {
-          // Don't process credits to avoid downloading credit images
+        addCreditToNextFrame: (credit: any) => {
+          this.addCreditToHTML(credit);
         },
       },
       // Additional properties from working commit 72dfb2e:
