@@ -159,16 +159,6 @@ window.addEventListener('DOMContentLoaded', async () => {
         );
         const anyVisible = tileMeshes.some((m) => m.isEnabled());
         tileMeshes.forEach((m) => m.setEnabled(!anyVisible));
-      } else if (key === ' ') {
-        // Spacebar: Step Cesium camera update
-        event.preventDefault(); // Prevent page scroll
-        integration.stepCameraUpdate();
-      } else if (key === 'b' || key === 'B') {
-        // B key: Toggle bounding volume visibility
-        integration.toggleBoundingVolumes();
-      } else if (key === 'f' || key === 'F') {
-        // F key: Toggle frustum wireframe visibility
-        integration.toggleFrustumWireframe();
       } else if (key === 'm' || key === 'M') {
         // M key: Manually trigger Cesium's decreaseScreenSpaceError()
         integration.manuallyDecreaseSSE();

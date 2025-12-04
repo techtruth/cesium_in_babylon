@@ -55,7 +55,6 @@ export class SimpleBabylonTileContent {
   get featuresLength(): number {
     return 0;
   }
-
   get pointsLength(): number {
     return 0;
   }
@@ -88,11 +87,9 @@ export class SimpleBabylonTileContent {
   get ready(): boolean {
     return this._ready;
   }
-
   get tileset(): any {
     return this._tileset;
   }
-
   get tile(): any {
     return this._tile;
   }
@@ -100,38 +97,24 @@ export class SimpleBabylonTileContent {
   get url(): string | undefined {
     return this._resource?.getUrlComponent();
   }
-
   getBabylonMeshes(): any[] {
     return this._meshes || [];
   }
-
   getStoredTransform(): any {
     return (this as any)._storedTransform;
   }
-
   applyStyle(style: any): void {
     (this as any)._style = style;
   }
 
   update(_tileset: any, frameState: any): void {
     if (!this._ready) {
-      if (!this._meshes || this._meshes.length === 0) {
-        this._ready = true;
-      } else {
-        const meshesLoaded = this._meshes.every((mesh) => mesh.isReady && mesh.isReady());
-        if (meshesLoaded) {
-          this._ready = true;
-        }
-      }
+      this._ready = !this._meshes?.length || this._meshes.every((mesh) => mesh.isReady?.());
     }
 
-    if (this._meshes && this._meshes.length > 0) {
-      this._meshes.forEach((mesh) => {
-        if (!mesh.isEnabled()) {
-          mesh.setEnabled(true);
-        }
-      });
-    }
+    this._meshes?.forEach((mesh) => {
+      if (!mesh.isEnabled()) mesh.setEnabled(true);
+    });
 
     this._lastUpdateFrame = frameState.frameNumber;
   }
@@ -163,23 +146,15 @@ export class SimpleBabylonTileContent {
     try {
       const dataView = new DataView(arrayBuffer, byteOffset);
       const magic = new TextDecoder().decode(new Uint8Array(arrayBuffer, byteOffset, 4));
-      if (magic !== 'b3dm') {
-        throw new Error(`Invalid B3DM magic: ${magic}`);
-      }
+      if (magic !== 'b3dm') throw new Error(`Invalid B3DM magic: ${magic}`);
 
       const byteLength = dataView.getUint32(8, true);
-      const featureTableJSONByteLength = dataView.getUint32(12, true);
-      const featureTableBinaryByteLength = dataView.getUint32(16, true);
-      const batchTableJSONByteLength = dataView.getUint32(20, true);
-      const batchTableBinaryByteLength = dataView.getUint32(24, true);
-
       let gltfOffset = byteOffset + 28;
-      gltfOffset += featureTableJSONByteLength + featureTableBinaryByteLength;
-      gltfOffset += batchTableJSONByteLength + batchTableBinaryByteLength;
+      gltfOffset += dataView.getUint32(12, true) + dataView.getUint32(16, true);
+      gltfOffset += dataView.getUint32(20, true) + dataView.getUint32(24, true);
 
       const gltfByteLength = byteLength - (gltfOffset - byteOffset);
       const gltfData = new Uint8Array(arrayBuffer, gltfOffset, gltfByteLength);
-
       await content.loadContent(gltfData);
     } catch (error) {
       console.error('B3DM parsing failed:', error);
@@ -188,10 +163,6 @@ export class SimpleBabylonTileContent {
     return content;
   }
 
-  /**
-   * Creates a SimpleBabylonTileContent from a GLB ArrayBuffer
-   * Follows the exact signature of Model3DTileContent.fromGltf()
-   */
   static async fromGltf(
     tileset: any,
     tile: any,
@@ -211,24 +182,9 @@ export class SimpleBabylonTileContent {
     return content;
   }
 
-  // ========================================
-  // NATIVE CESIUM INTEGRATION METHODS
-  // Required for proper selection algorithm integration
-  // ========================================
-
-  /**
-   * NATIVE CESIUM CLEANUP PATTERN: Hide meshes for tiles not selected in recent frames
-   * This mimics how Cesium's native models get hidden when their tiles aren't selected
-   */
   checkAndHideIfNotSelected(currentFrame: number): void {
-    // If this tile hasn't been updated in the last 2 frames, hide its meshes
-    // This matches Cesium's pattern where unselected tiles don't get rendered
     if (this._lastUpdateFrame !== -1 && currentFrame - this._lastUpdateFrame >= 2) {
-      this._meshes.forEach((mesh) => {
-        if (mesh.isEnabled()) {
-          mesh.setEnabled(false);
-        }
-      });
+      this._meshes.forEach((mesh) => mesh.isEnabled() && mesh.setEnabled(false));
     }
   }
 }
