@@ -1,7 +1,7 @@
 // Starting main.ts execution
 
 import './style.css'
-import { Engine, Scene, FreeCamera, Vector3, HemisphericLight } from '@babylonjs/core'
+import { Engine, Scene, UniversalCamera, Vector3, HemisphericLight, Matrix, Quaternion, PointerEventTypes } from '@babylonjs/core'
 import { SimpleIntegration } from './simpleIntegration'
 
 window.addEventListener('DOMContentLoaded', async () => {
@@ -40,33 +40,30 @@ window.addEventListener('DOMContentLoaded', async () => {
         
         // HANDEDNESS TEST: Try RIGHT-HANDED to match Cesium coordinate system
         scene.useRightHandedSystem = true;
-        console.log(`🧭 COORDINATE SYSTEM: Babylon.js scene using RIGHT-HANDED coordinates (TEST)`);
-        console.log(`🔍 HANDEDNESS VERIFICATION: scene.useRightHandedSystem = ${scene.useRightHandedSystem}`);
         
-        // Setup FreeCamera for 3D world viewing (Earth-scale coordinates)
-        const camera = new FreeCamera("camera", Vector3.Zero(), scene);
+        // Setup UniversalCamera
+        const camera = new UniversalCamera("camera", new Vector3(0, 0, 0), scene);
         camera.attachControl(canvas, true);
+        
         
         // CRITICAL: Match Cesium's exact FOV for proper tile culling
         camera.fov = Math.PI / 3; // 60 degrees - MUST match Cesium's PerspectiveFrustum.fov
         
-        // Enable WASDQE controls
+        // Enable WASD controls
         camera.keysUp = [87]; // W
-        camera.keysDown = [83]; // S
+        camera.keysDown = [83]; // S  
         camera.keysLeft = [65]; // A
         camera.keysRight = [68]; // D
         camera.keysUpward = [81]; // Q
         camera.keysDownward = [69]; // E
         
+        // Disable mouse input
+        camera.inputs.remove(camera.inputs.attached["mouse"]);
+        
         // CRITICAL: Near-Cesium frustum parameters for Google Tilesets
         // FIXED: Use same near plane as integration (0.1) for consistency
         camera.minZ = 0.1;            // Near: 0.1m (matches simpleIntegration.ts)
         camera.maxZ = 200000000;      // Far: 200,000km
-        
-        // Make camera movement faster for large scale
-        // Mouse wheel sensitivity for zooming
-        camera.inertia = 0.7;
-        camera.angularSensibility = 1000;
         
         // Speed will be set after scene creation
         
@@ -81,7 +78,20 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
 
     const scene = createScene();
-    const camera = scene.activeCamera as FreeCamera;
+    const camera = scene.activeCamera as UniversalCamera;
+    
+    // Continuously maintain planetary upVector orientation
+    scene.onBeforeRenderObservable.add(() => {
+        // Camera position
+        const p = camera.position;
+
+        // Down = toward center (0,0,0)
+        const down = p.clone().scale(-1).normalize();
+
+        // Up = away from center (pure radial direction)
+        const up = down.scale(-1);
+        camera.upVector.copyFrom(up);
+    });
     
     // Speed settings for different levels (1-9 keys) - moved to outer scope
     const cameraSpeedLevels = [
@@ -111,26 +121,27 @@ window.addEventListener('DOMContentLoaded', async () => {
         // Try loading Google Photorealistic 3D Tiles
         try {
             
-            // Switch back to Google Earth tiles to test REPLACE refinement with real data
-            // Mars Ion Asset ID 3644333
-            await integration.loadCesiumIonAsset(3644333, 'Mars 3D Tiles');
-            // Mars 3D Tiles loaded
+            // Switch back to Mars for now - it's a complete 3D tileset with terrain
+            // Mars includes both terrain and surface features in 3D Tiles format
+            await integration.loadCesiumIonAsset(3644333, 'Cesium Mars');
+            // Mars terrain and features loaded
             
-            // Calculate coordinates for Mars surface viewing
-            // Use Mars coordinates - example location on Mars surface
-            const marsLat = 0.0 * Math.PI / 180; // Equator
-            const marsLon = 0.0 * Math.PI / 180; // Prime meridian
-            const surfaceAltitude = 0; // Sea level
-            const cameraAltitude = 1000; // 1km above surface - TEST: Much lower to increase SSE
+            // Calculate coordinates for Mars viewing 
+            // Use Mars coordinates - equator and prime meridian for good view
+            const marsLat = 0.0 * Math.PI / 180; // Mars equator
+            const marsLon = 0.0 * Math.PI / 180; // Mars prime meridian
+            const surfaceAltitude = 0; // Mars surface level
+            const cameraAltitude = 2000; // 2km above Mars surface
             
-            console.log('📐 COORDINATE SETUP:', {
+            // Coordinate setup logged silently to reduce console spam
+            /*console.log('📐 COORDINATE SETUP:', {
                 latDegrees: 0.0,
                 lonDegrees: 0.0,
                 latRadians: marsLat,
                 lonRadians: marsLon,
                 surfaceAltitude,
                 cameraAltitude
-            });
+            });*/
             
             // Use Cesium's proper ellipsoid calculations
             const { Cartesian3: CesiumCartesian3, Ellipsoid } = await import('cesium');
@@ -141,11 +152,12 @@ window.addEventListener('DOMContentLoaded', async () => {
             const marsSurfaceCesium = CesiumCartesian3.fromRadians(marsLon, marsLat, surfaceAltitude, Ellipsoid.MARS);
             const cameraPositionCesium = CesiumCartesian3.fromRadians(marsLon, marsLat, cameraAltitude, Ellipsoid.MARS);
             
-            console.log('🔴 MARS COORDINATES DEBUG:');
+            // Mars coordinates debug logged silently to reduce console spam
+            /*console.log('🔴 MARS COORDINATES DEBUG:');
             console.log(`   Lat/Lon: ${0.0}°, ${0.0}° (${marsLat.toFixed(6)}, ${marsLon.toFixed(6)} radians)`);
             console.log(`   Original Cesium ECEF camera: (${cameraPositionCesium.x.toFixed(0)}, ${cameraPositionCesium.y.toFixed(0)}, ${cameraPositionCesium.z.toFixed(0)})`);
             console.log(`   → Babylon camera position: (${cameraPositionCesium.x.toFixed(0)}, ${cameraPositionCesium.z.toFixed(0)}, ${cameraPositionCesium.y.toFixed(0)})`);
-            console.log(`   EXPECTATION: simpleIntegration should send back the original ECEF coordinates`);
+            console.log(`   EXPECTATION: simpleIntegration should send back the original ECEF coordinates`);*/
             
             // Store for reference
             (window as any).originalMarsEcef = cameraPositionCesium;
@@ -156,21 +168,26 @@ window.addEventListener('DOMContentLoaded', async () => {
             const cameraPosition = new Vector3(cameraPositionCesium.x, cameraPositionCesium.z, -cameraPositionCesium.y);
             
             // Coordinate system alignment: Cesium ECEF → Babylon view-centered
-            console.log('📍 BABYLON CAMERA POSITIONING:', {
+            // Camera positioning logged silently to reduce console spam
+            /*console.log('📍 BABYLON CAMERA POSITIONING:', {
                 marsSurfaceBabylon: { x: marsSurface.x, y: marsSurface.y, z: marsSurface.z },
                 cameraPositionBabylon: { x: cameraPosition.x, y: cameraPosition.y, z: cameraPosition.z },
                 distanceFromSurface: Vector3.Distance(cameraPosition, marsSurface),
                 expectedDistance: cameraAltitude
-            });
+            });*/
             
             // Store Mars surface coordinates for spacebar functionality
             const marsSurfaceForFrameState = marsSurfaceCesium;
             
-            // Set camera position and look down at Mars surface
+            // Set camera position directly
             camera.position = cameraPosition;
-            camera.setTarget(marsSurface);
             
-            // Camera positioned and targeted at Mars surface
+            // Camera position set - upVector will be handled by onBeforeRenderObservable
+            
+            console.log('✅ Camera positioned 2km above Mars, looking at surface');
+            
+            
+            // Camera positioned with planetary gravity alignment
             
             // Add keyboard controls
             window.addEventListener('keydown', (event) => {
@@ -185,7 +202,7 @@ window.addEventListener('DOMContentLoaded', async () => {
                     let visibleMeshes = 0;
                     
                     scene.meshes.forEach(mesh => {
-                        if (mesh.name !== 'camera' && mesh.name !== 'moonSphere') {
+                        if (mesh.name !== 'camera' && mesh.name !== 'earthSphere') {
                             totalMeshes++;
                             if (mesh.isEnabled()) visibleMeshes++;
                         }
@@ -194,7 +211,7 @@ window.addEventListener('DOMContentLoaded', async () => {
                     const shouldShowAll = visibleMeshes < totalMeshes;
                     
                     scene.meshes.forEach(mesh => {
-                        if (mesh.name !== 'camera' && mesh.name !== 'moonSphere') {
+                        if (mesh.name !== 'camera' && mesh.name !== 'earthSphere') {
                             mesh.setEnabled(shouldShowAll);
                         }
                     });
@@ -216,32 +233,32 @@ window.addEventListener('DOMContentLoaded', async () => {
                 }
             });
             
-            // Camera positioned over Moon
+            // Camera positioned over NYC
             
             // Add visual reference objects to understand coordinate system
             const { MeshBuilder, StandardMaterial, Color3 } = await import('@babylonjs/core');
             
-            // Create Moon sphere using lunar dimensions
-            const moonRadius = 1737400; // Moon radius in meters (approximately spherical)
+            // Create Earth sphere using Earth dimensions
+            const earthRadius = 6378137; // Earth equatorial radius in meters (WGS84)
             
-            // Creating Moon sphere
+            // Creating Earth sphere
             
-            // Create sphere for the Moon (approximately spherical, not oblate like Earth)
-            const moonSphere = MeshBuilder.CreateSphere("moonSphere", {
-                diameter: moonRadius * 2,  // Moon diameter
+            // Create sphere for the Earth (oblate spheroid approximated as sphere)
+            const earthSphere = MeshBuilder.CreateSphere("earthSphere", {
+                diameter: earthRadius * 2,  // Earth diameter
                 segments: 64  // Higher resolution for better sphere approximation
             }, scene);
-            moonSphere.position = Vector3.Zero();
-            moonSphere.setEnabled(false); // Hide the Moon sphere
+            earthSphere.position = Vector3.Zero();
+            earthSphere.setEnabled(false); // Hide the Earth sphere
             
-            const moonMaterial = new StandardMaterial("moonMaterial", scene);
-            moonMaterial.diffuseColor = new Color3(0.8, 0.8, 0.7); // Moon gray/white
-            moonMaterial.emissiveColor = new Color3(0.2, 0.2, 0.15); // Slight glow
-            moonMaterial.wireframe = true; // Show as wireframe so we can see through it
-            moonSphere.material = moonMaterial;
+            const earthMaterial = new StandardMaterial("earthMaterial", scene);
+            earthMaterial.diffuseColor = new Color3(0.3, 0.5, 0.8); // Earth blue/green
+            earthMaterial.emissiveColor = new Color3(0.1, 0.15, 0.2); // Slight glow
+            earthMaterial.wireframe = true; // Show as wireframe so we can see through it
+            earthSphere.material = earthMaterial;
             
-            // SKY BARRIER: 5000m above Moon surface for camera boundary detection
-            const skyBarrierRadius = moonRadius + 5000; // 5000m above Moon surface
+            // SKY BARRIER: 5000m above Earth surface for camera boundary detection
+            const skyBarrierRadius = earthRadius + 5000; // 5000m above Earth surface
             const skyBarrier = MeshBuilder.CreateSphere("skyBarrier", {
                 diameter: skyBarrierRadius * 2,
                 segments: 32  // Lower resolution for performance
@@ -258,9 +275,9 @@ window.addEventListener('DOMContentLoaded', async () => {
             
             // Silent sky barrier creation
             
-            // Moon marker removed for cleaner debugging view
+            // Earth marker removed for cleaner debugging view
             
-            // Green wireframe sphere at Moon center for reference - make it bigger
+            // Green wireframe sphere at Earth center for reference - make it bigger
             const centerSphere = MeshBuilder.CreateSphere("centerSphere", {diameter: 100000}, scene); // 100km sphere
             centerSphere.position = Vector3.Zero();
             const centerMaterial = new StandardMaterial("centerMaterial", scene);
@@ -288,7 +305,7 @@ window.addEventListener('DOMContentLoaded', async () => {
             // Reference objects created
             
         } catch (error) {
-            console.error("Failed to load Moon Tileset:", error);
+            console.error("Failed to load OpenStreetMap Tileset:", error);
             throw error; // Let the outer catch handle it
         }
         

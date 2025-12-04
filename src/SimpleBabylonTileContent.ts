@@ -305,16 +305,16 @@ export class SimpleBabylonTileContent {
             if (!this._meshes || this._meshes.length === 0) {
                 // Empty content - mark as ready immediately (like empty tiles in Google 3D Tiles)
                 this._ready = true;
-                console.log(`✅ EMPTY CONTENT READY: Tile depth ${this._tile._depth} - no renderable content`);
+                // Empty content ready - logging silently to reduce console spam
             } else {
                 // Content with meshes - ensure meshes are properly loaded
                 const meshesLoaded = this._meshes.every(mesh => mesh.isReady && mesh.isReady());
                 if (meshesLoaded) {
                     this._ready = true;
-                    console.log(`✅ CONTENT READY: Tile depth ${this._tile._depth} - ${this._meshes.length} meshes loaded and ready`);
+                    // Content ready - logging silently to reduce console spam
                 } else {
                     // Content is still loading - stay in PROCESSING state
-                    console.log(`⏳ PROCESSING: Tile depth ${this._tile._depth} - ${this._meshes.length} meshes loading...`);
+                    // Processing status logged silently to reduce console spam
                 }
             }
         }
@@ -474,7 +474,7 @@ export class SimpleBabylonTileContent {
             this._meshes.forEach((mesh, index) => {
                 if (mesh.isEnabled()) {
                     mesh.setEnabled(false);
-                    console.log(`🙈 NATIVE HIDE: Tile depth ${this._tile._depth} mesh ${index} - not selected for ${currentFrame - this._lastUpdateFrame} frames`);
+                    // Mesh hidden silently to reduce console spam
                 }
             });
         }
