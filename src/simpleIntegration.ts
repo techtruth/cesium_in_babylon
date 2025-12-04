@@ -11,8 +11,6 @@ export class SimpleIntegration {
     private engine: Engine;
     private babylonScene: any;
     private cesiumTileset?: CesiumTilesetDerived;
-    private cesiumTerrainProvider?: any;
-    private babylonTerrainMeshes: Mesh[] = [];
     private renderTilesetPassState: any;
     private frameCount: number = 0;
     private lastFrameNumber: number = 0;

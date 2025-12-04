@@ -9,10 +9,9 @@
  * - Provides geometry/texture statistics for Cesium's memory management
  */
 
-import { Scene as BabylonScene, Matrix, Vector3 } from '@babylonjs/core';
+import { Scene as BabylonScene } from '@babylonjs/core';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
 import '@babylonjs/loaders/glTF';
-import * as Cesium from 'cesium';
 export class SimpleBabylonTileContent {
     private _tileset: any;
     private _tile: any;
@@ -31,18 +30,12 @@ export class SimpleBabylonTileContent {
 
     private async loadContent(gltfData: Uint8Array): Promise<void> {
         try {
-            if (!gltfData || gltfData.length === 0) {
-                // NATIVE PATTERN: Don't set ready immediately - let update() handle it
-                // Empty content should still go through proper state transitions
-                return;
-            }
-
             // Convert glTF data to Blob with proper MIME type
             const blob = new Blob([gltfData], { type: 'model/gltf-binary' });
             const objectURL = URL.createObjectURL(blob);
 
-
             // Load with Babylon's SceneLoader using proper glTF plugin
+            //TODO: DEPRECATED - REPLACE WITH NEWER IMPORT
             const result = await SceneLoader.ImportMeshAsync(
                 '', // meshNames (load all)
                 '', // rootUrl 
@@ -53,35 +46,22 @@ export class SimpleBabylonTileContent {
             );
             
             // Hide meshes by default until Cesium decides they should be visible
-            result.meshes.forEach((mesh, index) => {
-                // REMOVED: mesh.material.useLogarithmicDepth = true; - was causing depth issues
-                // Hide mesh until Cesium decides it should be visible
+            result.meshes.forEach((mesh, _index) => {
                 mesh.setEnabled(false);
             });
 
             // Store meshes for cleanup
             this._meshes = result.meshes;
-            
 
             // Store Cesium's transform for later application during rendering
             // DON'T apply here - let Cesium handle tile positioning through its normal pipeline
             this.storeCesiumTransform();
-
-            // NATIVE PATTERN: Don't set _ready = true here!
-            // Native Model3DTileContent only sets ready in update() when model.ready is true
-            // This ensures proper LOADING → PROCESSING → READY state transitions
-            
-            // Let Cesium recognize content loading is complete via the factory promise resolution:
-            // - tile._content is assigned when factory promise resolves
-            // - content.ready will return true only when update() sets it
-            // - Cesium computes contentAvailable and hasRenderableContent based on these states
 
             // Clean up object URL
             URL.revokeObjectURL(objectURL);
 
         } catch (error) {
             console.error('Failed to load tile content:', error);
-            // Don't mark ready on failure - let Cesium handle failed content properly
         }
     }
 
@@ -213,70 +193,6 @@ export class SimpleBabylonTileContent {
         // No group support needed
     }
 
-    /**
-     * COPY CESIUM EXACTLY: Model3DTileContent.getTextureIds()
-     * Returns texture IDs for loaded textures
-     */
-    getTextureIds(): string[] {
-        // For basic implementation, return empty array
-        // In full implementation, would return texture IDs from loaded meshes
-        return [];
-    }
-
-    /**
-     * COPY CESIUM EXACTLY: Model3DTileContent.getTextureByteLengthById()
-     * Returns byte length for specific texture
-     */
-    getTextureByteLengthById(_textureId: string): number | undefined {
-        // For basic implementation, return undefined
-        // In full implementation, would return texture size by ID
-        return undefined;
-    }
-
-    /**
-     * COPY CESIUM EXACTLY: Model3DTileContent.getExtension()
-     * Returns extension object if available
-     */
-    getExtension(_extensionName: string): any {
-        // For basic implementation, return undefined
-        // In full implementation, would return glTF extension data
-        return undefined;
-    }
-
-    // COPY CESIUM EXACTLY: Model3DTileContent feature methods
-    hasProperty(_featureId: number, _name: string): boolean {
-        // Native pattern: check if feature table exists and has property
-        // For basic implementation without feature tables, return false
-        return false;
-    }
-
-    getFeature(_featureId: number): undefined {
-        // COPY CESIUM EXACTLY: Model3DTileContent.getFeature()
-        // Native implementation accesses model.featureTables[model.featureTableId]
-        // For basic implementation without feature tables, return undefined
-        return undefined;
-    }
-
-    applyDebugSettings(enabled: boolean, color: any): void {
-        // COPY CESIUM EXACTLY: Model3DTileContent.applyDebugSettings()
-        // Native pattern: color = enabled ? color : Color.WHITE
-        const debugColor = enabled ? color : { r: 1, g: 1, b: 1, a: 1 }; // White equivalent
-        
-        if (this.featuresLength === 0) {
-            // Native: this._model.color = color
-            // For Babylon: apply color to all meshes
-            this._meshes.forEach(mesh => {
-                if (mesh.material && enabled) {
-                    // Basic debug coloring - could be enhanced
-                    (mesh.material as any).diffuseColor = debugColor;
-                }
-            });
-        } else if (this.batchTable) {
-            // Native: this.batchTable.setAllColor(color)
-            // For basic implementation, batch table not yet supported
-        }
-    }
-
     applyStyle(style: any): void {
         // COPY CESIUM EXACTLY: Model3DTileContent.applyStyle()
         // Native pattern: this._model.style = style
@@ -292,12 +208,6 @@ export class SimpleBabylonTileContent {
         // This matches Model3DTileContent.js exactly: just update properties and call model.update()
         
         // Don't return early for empty content - it still needs ready state processing
-
-        // Apply transform - equivalent to: model.modelMatrix = tile.computedTransform
-        const transform = this._tile.computedTransform;
-        if (transform) {
-            this.applyTransformToMeshes(transform);
-        }
 
         // NATIVE CESIUM PATTERN: Only set ready when content is truly ready
         // Model3DTileContent: if (!this._ready && model.ready) { this._ready = true; }
@@ -329,21 +239,6 @@ export class SimpleBabylonTileContent {
         // Track when this tile was last updated (selected by Cesium)
         const frameNumber = frameState.frameNumber;
         this._lastUpdateFrame = frameNumber;
-        
-        // Removed noisy debug logging - native pattern working correctly
-    }
-
-
-    pick(ray: any, frameState: any, result?: any): undefined {
-        // COPY CESIUM EXACTLY: Model3DTileContent.pick() signature and pattern
-        // Native: return this._model.pick(ray, frameState, verticalExaggeration, relativeHeight, Ellipsoid.WGS84, result)
-        if (!this._ready || !this._meshes) {
-            return undefined;
-        }
-        
-        // Basic implementation - could be enhanced with proper ray-mesh intersection
-        // For now, return undefined like the basic native fallback
-        return result;
     }
 
     isDestroyed(): boolean {
@@ -446,16 +341,6 @@ export class SimpleBabylonTileContent {
     // Required for proper selection algorithm integration
     // ========================================
 
-
-    /**
-     * NATIVE CESIUM PATTERN: Apply transform to meshes exactly like Model3DTileContent
-     */
-    private applyTransformToMeshes(transform: any): void {
-        // SKIP: Transform application - most Google 3D Tiles have identity/near-zero transforms
-        // Tiles are positioned via Cesium's tile hierarchy rather than individual mesh transforms
-        // This avoids the "mesh.setMatrix is not a function" error while maintaining functionality
-        return;
-    }
 
     featurePropertiesDirty: boolean = false;
     
