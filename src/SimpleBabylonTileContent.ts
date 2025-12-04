@@ -19,7 +19,7 @@ export class SimpleBabylonTileContent {
 
   private async loadContent(gltfData: Uint8Array): Promise<void> {
     try {
-      const blob = new Blob([gltfData], { type: 'model/gltf-binary' });
+      const blob = new Blob([gltfData as any], { type: 'model/gltf-binary' });
       const objectURL = URL.createObjectURL(blob);
 
       const result = await SceneLoader.ImportMeshAsync(

@@ -19,7 +19,7 @@ export class SimpleIntegration {
   private renderTilesetPassState: any;
   private frameCount: number = 0;
   private lastFrameNumber: number = 0;
-  private debugVisualization: DebugVisualization;
+  private debugVisualization!: DebugVisualization;
   private addedCredits: Set<string> = new Set();
 
   private addCreditToHTML(credit: any): void {
@@ -67,7 +67,7 @@ export class SimpleIntegration {
     const babylonPos = this.camera.position;
 
     // For UniversalCamera, get the actual look direction from position to target
-    const babylonTarget = this.camera.getTarget();
+    const babylonTarget = (this.camera as any).getTarget();
     const babylonDir = babylonTarget.subtract(babylonPos).normalize();
     const babylonUp = this.camera.upVector || Vector3.Up();
 
@@ -431,7 +431,7 @@ export class SimpleIntegration {
       ]);
 
       // Apply the transform to all meshes
-      meshes.forEach((mesh, index) => {
+      meshes.forEach((mesh) => {
         if (mesh && mesh.setPreTransformMatrix) {
           mesh.setPreTransformMatrix(babylonMatrix);
         } else if (mesh) {
