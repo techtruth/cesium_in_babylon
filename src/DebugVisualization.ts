@@ -1,5 +1,6 @@
 import { Scene, MeshBuilder, StandardMaterial, Color3, Vector3 } from '@babylonjs/core';
 import { Ellipsoid } from 'cesium';
+import { cesiumToBabylonVec3 } from './coordUtils';
 
 export class DebugVisualization {
   private babylonScene: Scene;
@@ -9,10 +10,12 @@ export class DebugVisualization {
   private boundingVolumesVisible = false;
   private frustumVisible = false;
   private referenceObjectsVisible = false;
+  private cameraOrientationVisible = false;
 
   private frustumVisualization: any = null;
   private boundingVolumeWireframes: any[] = [];
   private frustumWireframes: any[] = [];
+  private cameraOrientationLines: any[] = [];
   private lastFrustumUpdate = 0;
 
   constructor(babylonScene: Scene, cesiumTileset: any) {
@@ -40,6 +43,10 @@ export class DebugVisualization {
         case 't':
           event.preventDefault();
           this.toggleReferenceObjectsVisibility();
+          break;
+        case 'c':
+          event.preventDefault();
+          this.toggleCameraOrientationVisibility();
           break;
       }
     });
@@ -89,6 +96,15 @@ export class DebugVisualization {
         mesh.setEnabled(this.referenceObjectsVisible);
       }
     });
+  }
+
+  private toggleCameraOrientationVisibility(): void {
+    this.cameraOrientationVisible = !this.cameraOrientationVisible;
+    console.log(this.cameraOrientationVisible ? '📹 Camera orientation on' : '📹 Camera orientation off');
+
+    if (!this.cameraOrientationVisible) {
+      this.clearCameraOrientationLines();
+    }
   }
 
   private createReferenceObjects(): void {
@@ -154,6 +170,9 @@ export class DebugVisualization {
   updateVisualizations(camera: any, frameNumber: number): void {
     if (this.frustumVisible) {
       this.updateFrustumVisualization(camera, frameNumber);
+    }
+    if (this.cameraOrientationVisible) {
+      this.updateCameraOrientationVisualization(camera);
     }
   }
 
@@ -371,9 +390,43 @@ export class DebugVisualization {
     this.frustumWireframes = [];
   }
 
+  private updateCameraOrientationVisualization(cesiumCamera: any): void {
+    this.clearCameraOrientationLines();
+
+    if (!cesiumCamera) return;
+
+    const cameraPos = cesiumToBabylonVec3(cesiumCamera.position);
+    const forwardDir = cesiumToBabylonVec3(cesiumCamera.direction).normalize();
+    const lineLength = 1000000; // 1000km lines
+
+    // Down vector (toward planet center) - RED line going to origin
+    const downLine = MeshBuilder.CreateLines('cameraDown', {
+      points: [cameraPos, Vector3.Zero()]
+    }, this.babylonScene);
+    downLine.color = Color3.Red();
+    this.cameraOrientationLines.push(downLine);
+
+    // Forward direction - GREEN line based on Cesium camera direction
+    const forwardEnd = cameraPos.add(forwardDir.scale(lineLength));
+    
+    const forwardLine = MeshBuilder.CreateLines('cameraForward', {
+      points: [cameraPos, forwardEnd]
+    }, this.babylonScene);
+    forwardLine.color = Color3.Green();
+    this.cameraOrientationLines.push(forwardLine);
+  }
+
+  private clearCameraOrientationLines(): void {
+    this.cameraOrientationLines.forEach((line) => {
+      line.dispose();
+    });
+    this.cameraOrientationLines = [];
+  }
+
   dispose(): void {
     this.clearBoundingVolumeWireframes();
     this.clearFrustumWireframes();
+    this.clearCameraOrientationLines();
     if (this.frustumVisualization) {
       this.frustumVisualization.dispose();
       this.frustumVisualization = null;

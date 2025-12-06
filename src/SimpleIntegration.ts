@@ -1,4 +1,4 @@
-import { Camera, Engine, Vector3, Matrix } from '@babylonjs/core';
+import { Camera, Engine, Vector3 } from '@babylonjs/core';
 import {
   Ion,
   IonResource, 
@@ -15,9 +15,11 @@ import {
 import * as CesiumInternal from 'cesium';
 
 import { SimpleBabylonTileContent } from './SimpleBabylonTileContent';
+import { babylonToCesiumVec3, cesiumMatrixToBabylonMatrix } from './coordUtils';
 
 //This can go away after PR to cesium is accepted
 //import CesiumTilesetDerived from './cesium_derived/CesiumTilesetDerived.js';
+// @ts-expect-error: derived Cesium tileset is plain JS without types
 import CesiumTilesetDerived from './cesium_derived/Cesium3DTileset';
 
 import { DebugVisualization } from './DebugVisualization';
@@ -33,6 +35,7 @@ export class SimpleIntegration {
   private renderTilesetPassState: any;
   private frameCount: number = 0;
   private lastFrameNumber: number = 0;
+  private lastCameraState: any;
   private debugVisualization!: DebugVisualization;
   private addedCredits: Set<string> = new Set();
 
@@ -80,29 +83,19 @@ export class SimpleIntegration {
   private createCesiumCamera(): any {
     const babylonPos = this.camera.position;
 
-    // For UniversalCamera, get the actual look direction from position to target
-    const babylonTarget = (this.camera as any).getTarget();
-    const babylonDir = babylonTarget.subtract(babylonPos).normalize();
-    const babylonUp = this.camera.upVector || Vector3.Up();
+    // Build an orthonormal basis that respects the radial up we set each frame
+    // Babylon's forward points opposite Cesium's view direction; flip to keep frustum aligned
+    const forward = this.camera.getDirection(Vector3.Forward().scale(-1)).normalize();
+    const radialUp =
+      babylonPos.lengthSquared() > 0 ? babylonPos.clone().normalize() : new Vector3(0, 1, 0);
+    const rightVec = Vector3.Cross(radialUp, forward).normalize();
+    const upVec = Vector3.Cross(forward, rightVec).normalize();
 
-    // Simple coordinate transformation: Babylon → Cesium ECEF
-    const position = new Cartesian3(babylonPos.x, -babylonPos.z, babylonPos.y);
-
-    // Transform direction vector (from camera toward target)
-    const direction = new Cartesian3(babylonDir.x, -babylonDir.z, babylonDir.y);
-    Cartesian3.normalize(direction, direction);
-
-    const up = new Cartesian3(babylonUp.x, -babylonUp.z, babylonUp.y);
-    Cartesian3.normalize(up, up);
-
-    // Calculate right vector
-    const right = new Cartesian3();
-    Cartesian3.cross(direction, up, right);
-    Cartesian3.normalize(right, right);
-
-    // Recalculate up to ensure orthogonality
-    Cartesian3.cross(right, direction, up);
-    Cartesian3.normalize(up, up);
+    // Pure coordinate transformation: Babylon → Cesium ECEF 
+    const position = babylonToCesiumVec3(babylonPos);
+    const direction = babylonToCesiumVec3(forward);
+    const up = babylonToCesiumVec3(upVec);
+    const right = babylonToCesiumVec3(rightVec);
 
     // Create frustum
     const frustum = new PerspectiveFrustum({
@@ -113,10 +106,7 @@ export class SimpleIntegration {
     });
 
     // Calculate cartographic position for geographic reference
-    const positionCartographic = Cartographic.fromCartesian(
-      position,
-      Ellipsoid.WGS84
-    );
+    const positionCartographic = Cartographic.fromCartesian(position, Ellipsoid.MARS);
 
     return {
       // Basic vectors
@@ -169,15 +159,16 @@ export class SimpleIntegration {
    * Update tileset with frame counting like working commit 72dfb2e
    */
   update(): void {
-    this.frameCount++;
-
     if (!this.cesiumTileset) return;
     if (!this.cesiumTileset.root || !this.cesiumTileset.asset) return;
 
-    // Check if camera updates are paused (spacebar control)
-    if (this.debugVisualization?.isPaused) {
-      return; // Skip update when paused
+    // When paused, keep debug overlays using the last Cesium camera instead of live Babylon state
+    if (this.debugVisualization?.isPaused && this.lastCameraState) {
+      this.debugVisualization.updateVisualizations(this.lastCameraState, this.lastFrameNumber);
+      return;
     }
+
+    this.frameCount++;
 
     const camera = this.createCesiumCamera();
 
@@ -217,7 +208,7 @@ export class SimpleIntegration {
       },
       cullingVolume: cullingVolume,
       mode: SceneMode.SCENE3D,
-      frameNumber: ++this.frameCount,
+      frameNumber: this.frameCount,
       // CRITICAL: Add JulianDate time for BaseTraversal tile prioritization
       time: JulianDate.now(),
       // CESIUM EXACT: newFrame flag - true only for actual new frames
@@ -234,18 +225,27 @@ export class SimpleIntegration {
       },
       // Additional properties from working commit 72dfb2e:
       pixelRatio: 1.0,
-      mapProjection: new GeographicProjection(),
       verticalExaggeration: 1.0,
       verticalExaggerationRelativeHeight: 0.0,
       commandList: [],
       morphTime: 1.0,
       minimumTerrainHeight: -11000.0,
-      occluder: undefined, // Cesium will populate if needed
       // CRITICAL: Add afterRender function that SkipTraversal may need
       afterRender: [],
+      mapProjection: new GeographicProjection(Ellipsoid.MARS),
+      occluder: (CesiumInternal as any).EllipsoidalOccluder
+        ? new (CesiumInternal as any).EllipsoidalOccluder(Ellipsoid.MARS, Cartesian3.ZERO)
+        : undefined,
     };
-
+    
     try {
+      this.debugVisualization.updateVisualizations(camera, frameState.frameNumber);
+      
+      if (this.debugVisualization?.isPaused) {
+        //Skip the rest if paused
+        return;
+      }
+
       // Set up load timestamp if needed (from prePassesUpdate)
       if (!(this.cesiumTileset as any)._loadTimestamp) {
         (this.cesiumTileset as any)._loadTimestamp = JulianDate.clone(frameState.time);
@@ -263,10 +263,8 @@ export class SimpleIntegration {
 
       // NATIVE CESIUM PATTERN: Follow exact sequence like native Cesium Scene
       // 1. prePassesUpdate() - processes tiles in PROCESSING state to READY
-      if (typeof (this.cesiumTileset as any).prePassesUpdate === 'function') {
-        (this.cesiumTileset as any).prePassesUpdate(frameState);
-      }
-
+      (this.cesiumTileset as any).prePassesUpdate(frameState);
+          
       // 2. main update() - traversal, selection, and content loading
       this.cesiumTileset.update(frameState);
 
@@ -282,9 +280,8 @@ export class SimpleIntegration {
 
       // 5. Update debug visualizations
       this.debugVisualization?.updateVisualizations(camera, frameState.frameNumber);
-
-      // Update frame tracking for next frame
-      this.lastFrameNumber = this.frameCount;
+      this.lastCameraState = camera;
+      this.lastFrameNumber = frameState.frameNumber;
     } catch (error) {
       console.error('Error updating tileset:', error);
     }
@@ -421,29 +418,7 @@ export class SimpleIntegration {
    */
   private applyTransformToMeshes(meshes: any[], cesiumTransform: any): void {
     try {
-      // Convert Cesium's Matrix4 to Babylon's Matrix
-      // Cesium uses column-major matrices, Babylon uses row-major
-      const cesiumArray = cesiumTransform;
-
-      // Convert Cesium column-major Matrix4 to Babylon row-major Matrix (transpose)
-      const babylonMatrix = Matrix.FromArray([
-        cesiumArray[0],
-        cesiumArray[4],
-        cesiumArray[8],
-        cesiumArray[12],
-        cesiumArray[1],
-        cesiumArray[5],
-        cesiumArray[9],
-        cesiumArray[13],
-        cesiumArray[2],
-        cesiumArray[6],
-        cesiumArray[10],
-        cesiumArray[14],
-        cesiumArray[3],
-        cesiumArray[7],
-        cesiumArray[11],
-        cesiumArray[15],
-      ]);
+      const babylonMatrix = cesiumMatrixToBabylonMatrix(cesiumTransform);
 
       // Apply the transform to all meshes
       meshes.forEach((mesh) => {

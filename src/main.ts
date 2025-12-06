@@ -17,6 +17,7 @@ import {
 } from '@babylonjs/core';
 import { SimpleIntegration } from './SimpleIntegration';
 import { Cartesian3 as CesiumCartesian3, Ellipsoid } from 'cesium';
+import { cesiumToBabylonVec3 } from './coordUtils';
 
 window.addEventListener('DOMContentLoaded', async () => {
   // DOM loaded, starting app initialization
@@ -83,7 +84,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   const camera = scene.activeCamera as UniversalCamera;
 
   // Keyboard event handler for camera speed and tile visibility controls
-  function setupKeyboardControls(camera: UniversalCamera, scene: Scene, integration: any) {
+  function setupKeyboardControls(camera: UniversalCamera, scene: Scene) {
     const cameraSpeedLevels = [0, 5, 50, 200, 1000, 5000, 25000, 100000, 500000, 2000000];
     let currentSpeedLevel = 5;
     camera.speed = cameraSpeedLevels[currentSpeedLevel];
@@ -125,18 +126,16 @@ window.addEventListener('DOMContentLoaded', async () => {
     Ellipsoid.MARS
   );
   // Transform coordinates: Cesium ECEF to Babylon
-  const cameraPosition = new Vector3(
-    cameraPositionCesium.x,
-    cameraPositionCesium.z,
-    -cameraPositionCesium.y
-  );
+  const cameraPosition = cesiumToBabylonVec3(cameraPositionCesium);
   // Set camera position directly
   camera.position = cameraPosition;
   // Setup keyboard controls for camera speed and tile visibility
-  setupKeyboardControls(camera, scene, integration);
+  setupKeyboardControls(camera, scene);
 
   // Start the render loop with integration updates
   engine.runRenderLoop(() => {
+    // Set camera's up vector to point away from planet center (so down points toward planet)
+    camera.upVector = camera.position.clone().normalize();
     // Update the integration every frame (let Cesium work)
     integration.update();
     scene.render();
