@@ -38,6 +38,7 @@ export class SimpleIntegration {
   private lastCameraState: any;
   private debugVisualization!: DebugVisualization;
   private addedCredits: Set<string> = new Set();
+  private debugLogInterval: number = 180; // frames between debug logs to avoid spam
 
   private addCreditToHTML(credit: any): void {
     const creditText = credit.text || credit.html || credit.toString();
@@ -98,15 +99,18 @@ export class SimpleIntegration {
     const right = babylonToCesiumVec3(rightVec);
 
     // Create frustum
+    // Clamp far plane so the Babylon frustum doesn't include the far side of the Earth
+    const earthRadius = Ellipsoid.WGS84.maximumRadius;
+    const cappedFar = Math.min(this.camera.maxZ, earthRadius * 0.25);
     const frustum = new PerspectiveFrustum({
       fov: this.camera.fov,
       aspectRatio: this.engine.getRenderWidth() / this.engine.getRenderHeight(),
       near: this.camera.minZ, // Now consistent: both use 0.1
-      far: this.camera.maxZ,
+      far: cappedFar,
     });
 
     // Calculate cartographic position for geographic reference
-    const positionCartographic = Cartographic.fromCartesian(position, Ellipsoid.MARS);
+    const positionCartographic = Cartographic.fromCartesian(position, Ellipsoid.WGS84);
 
     return {
       // Basic vectors
@@ -120,10 +124,10 @@ export class SimpleIntegration {
       directionWC: direction,
       upWC: up,
       rightWC: right,
-      // CRITICAL: Camera movement detection properties for tile refinement
-      timeSinceMoved: 0.0, // Just moved, trigger tile refinement
-      positionWCDeltaMagnitude: 1000.0, // Significant movement detected
-      positionWCDeltaMagnitudeLastFrame: 0.0, // Previous frame delta
+      // Treat camera as stable so Cesium will refine instead of deferring while "moving"
+      timeSinceMoved: Number.POSITIVE_INFINITY,
+      positionWCDeltaMagnitude: 0.0,
+      positionWCDeltaMagnitudeLastFrame: 0.0,
       // Additional properties from working commit
       positionCartographic: positionCartographic,
     };
@@ -140,13 +144,37 @@ export class SimpleIntegration {
       // Use standard Cesium Ion asset loading
       const resource = await IonResource.fromAssetId(assetId);
 
-      this.cesiumTileset = (await CesiumTilesetDerived.fromUrl(resource, {
+      const isGooglePhotorealistic = assetId === 2275207;
+      const tilesetOptions: any = {
         show: true,
         shadows: 1,
-        disableDynamicMapManager: true
-      })) as CesiumTilesetDerived;
+        disableDynamicMapManager: true,
+      };
+
+      // Match createGooglePhotorealistic3DTileset defaults when using the Google tileset
+      if (isGooglePhotorealistic) {
+        tilesetOptions.cacheBytes = 1536 * 1024 * 1024;
+        tilesetOptions.maximumCacheOverflowBytes = 1024 * 1024 * 1024;
+        tilesetOptions.enableCollision = true;
+      }
+
+      this.cesiumTileset = (await CesiumTilesetDerived.fromUrl(resource, tilesetOptions)) as CesiumTilesetDerived;
 
       await this.cesiumTileset.readyPromise;
+      // Use Cesium default maximumScreenSpaceError (16)
+      // Keep adaptive refinements for Google tiles to smooth loading
+      if (isGooglePhotorealistic) {
+        if ('dynamicScreenSpaceError' in this.cesiumTileset) this.cesiumTileset.dynamicScreenSpaceError = true;
+        if ('dynamicScreenSpaceErrorFactor' in this.cesiumTileset) (this.cesiumTileset as any).dynamicScreenSpaceErrorFactor = 12.0;
+        if ('foveatedScreenSpaceError' in this.cesiumTileset) this.cesiumTileset.foveatedScreenSpaceError = true;
+        if ('foveatedConeSize' in this.cesiumTileset) (this.cesiumTileset as any).foveatedConeSize = 0.2;
+        if ('foveatedMinimumScreenSpaceErrorRelaxation' in this.cesiumTileset) {
+          (this.cesiumTileset as any).foveatedMinimumScreenSpaceErrorRelaxation = 1.0;
+        }
+        if ('progressiveResolutionHeightFraction' in this.cesiumTileset) {
+          this.cesiumTileset.progressiveResolutionHeightFraction = 0.3;
+        }
+      }
 
       this.debugVisualization = new DebugVisualization(this.babylonScene, this.cesiumTileset);
     } catch (error) {
@@ -232,9 +260,9 @@ export class SimpleIntegration {
       minimumTerrainHeight: -11000.0,
       // CRITICAL: Add afterRender function that SkipTraversal may need
       afterRender: [],
-      mapProjection: new GeographicProjection(Ellipsoid.MARS),
+      mapProjection: new GeographicProjection(Ellipsoid.WGS84),
       occluder: (CesiumInternal as any).EllipsoidalOccluder
-        ? new (CesiumInternal as any).EllipsoidalOccluder(Ellipsoid.MARS, Cartesian3.ZERO)
+        ? new (CesiumInternal as any).EllipsoidalOccluder(Ellipsoid.WGS84, Cartesian3.ZERO)
         : undefined,
     };
     
@@ -282,6 +310,32 @@ export class SimpleIntegration {
       this.debugVisualization?.updateVisualizations(camera, frameState.frameNumber);
       this.lastCameraState = camera;
       this.lastFrameNumber = frameState.frameNumber;
+
+      // 6. Throttled debug logging to inspect refinement without spamming
+      if (this.frameCount % this.debugLogInterval === 0) {
+        const selected = (this.cesiumTileset as any)._selectedTiles;
+        const requested = (this.cesiumTileset as any)._requestedTiles;
+        const maximumSSE = (this.cesiumTileset as any).maximumScreenSpaceError;
+        const memoryAdjustedSSE = (this.cesiumTileset as any)._memoryAdjustedScreenSpaceError;
+        const dynamicSSE = (this.cesiumTileset as any).dynamicScreenSpaceError;
+        let minLevel = Number.POSITIVE_INFINITY;
+        let maxLevel = -1;
+        let maxTileSSE = 0;
+        selected?.forEach((t: any) => {
+          if (typeof t._level === 'number') {
+            minLevel = Math.min(minLevel, t._level);
+            maxLevel = Math.max(maxLevel, t._level);
+          }
+          const tileSSE = t._screenSpaceErrorProgressiveResolution ?? t._screenSpaceError ?? 0;
+          if (tileSSE > maxTileSSE) maxTileSSE = tileSSE;
+        });
+        if (!Number.isFinite(minLevel)) minLevel = 0;
+        console.log(
+          `[Tileset dbg] frame=${this.frameCount} selected=${selected?.length ?? 0} requested=${requested?.length ?? 0} levels=${minLevel}-${maxLevel} maxTileSSE=${maxTileSSE.toFixed(
+            2
+          )} maxSSE=${maximumSSE} memAdjSSE=${memoryAdjustedSSE} dynamicSSE=${dynamicSSE}`
+        );
+      }
     } catch (error) {
       console.error('Error updating tileset:', error);
     }
@@ -330,10 +384,11 @@ export class SimpleIntegration {
     const RequestScheduler = (CesiumInternal as any).RequestScheduler;
     if (!RequestScheduler) return;
 
-    RequestScheduler.maximumRequests = 100;
-    RequestScheduler.maximumRequestsPerServer = 36;
+    // Allow plenty of outstanding requests but avoid overwhelming the pipeline
+    RequestScheduler.maximumRequests = 90;
+    RequestScheduler.maximumRequestsPerServer = 32;
 
-    if ('throttleRequests' in RequestScheduler && RequestScheduler.throttleRequests !== false) {
+    if ('throttleRequests' in RequestScheduler) {
       RequestScheduler.throttleRequests = false;
     }
 

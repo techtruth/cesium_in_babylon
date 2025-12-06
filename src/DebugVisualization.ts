@@ -108,24 +108,24 @@ export class DebugVisualization {
   }
 
   private createReferenceObjects(): void {
-    const marsRadius = Ellipsoid.MARS.maximumRadius; // Official Cesium Mars ellipsoid radius
+    const earthRadius = Ellipsoid.WGS84.maximumRadius; // Earth ellipsoid radius
 
-    // Mars sphere (hidden wireframe)
+    // Earth sphere (hidden wireframe)
     const marsSphere = MeshBuilder.CreateSphere(
       'earthSphere',
-      { diameter: marsRadius * 2, segments: 64 },
+      { diameter: earthRadius * 2, segments: 64 },
       this.babylonScene
     );
     marsSphere.position = Vector3.Zero();
     marsSphere.setEnabled(false);
     const marsMaterial = new StandardMaterial('earthMaterial', this.babylonScene);
-    marsMaterial.diffuseColor = new Color3(0.8, 0.4, 0.2); // Mars reddish color
-    marsMaterial.emissiveColor = new Color3(0.2, 0.1, 0.05);
+    marsMaterial.diffuseColor = new Color3(0.3, 0.5, 0.9); // Earth-ish color
+    marsMaterial.emissiveColor = new Color3(0.1, 0.2, 0.4);
     marsMaterial.wireframe = true;
     marsSphere.material = marsMaterial;
 
     // Sky barrier (hidden) - scaled by 2x
-    const skyBarrierRadius = marsRadius * 2;
+    const skyBarrierRadius = earthRadius * 2;
     const skyBarrier = MeshBuilder.CreateSphere(
       'skyBarrier',
       { diameter: skyBarrierRadius * 2, segments: 32 },

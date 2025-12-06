@@ -3,7 +3,7 @@
  *
  * Main entry point for rendering Mars 3D Tiles in Babylon.js with planetary camera controls.
  * Features:
- * - UniversalCamera with keyboard-only controls (mouse disabled)
+ * - UniversalCamera with keyboard + mouse controls
  * - Mars Ion Asset 3644333 rendering via native Cesium3DTileset
  * - Speed controls (1-9 keys), tile visibility toggle (0 key)
  * - Visual reference objects for spatial orientation
@@ -68,9 +68,6 @@ window.addEventListener('DOMContentLoaded', async () => {
     camera.keysUpward = [81]; // Q
     camera.keysDownward = [69]; // E
 
-    // Disable mouse input
-    camera.inputs.remove(camera.inputs.attached['mouse']);
-
     camera.minZ = 0.1; // Near: 0.1m
     camera.maxZ = 200000000; // Far: 200,000km
 
@@ -109,26 +106,30 @@ window.addEventListener('DOMContentLoaded', async () => {
   // Create the simple integration (Ion auth now handled internally)
   const integration = new SimpleIntegration(scene, camera, engine);
 
-  // Mars includes both terrain and surface features in 3D Tiles format
-  await integration.loadCesiumIonAsset(3644333, 'Cesium Mars');
+  // Earth photorealistic tileset from Cesium ion (Google 3D Tiles)
+  await integration.loadCesiumIonAsset(2275207, 'Google Photorealistic 3D Tiles');
 
-  // Calculate coordinates for Mars viewing
-  // Use Mars coordinates - equator and prime meridian for good view
-  const marsLat = (0.0 * Math.PI) / 180; // Mars equator
-  const marsLon = (0.0 * Math.PI) / 180; // Mars prime meridian
-  const cameraAltitude = 2000; // 2km above Mars surface
+  // Initial Earth view: Statue of Liberty, modest altitude
+  const lat = (40.689249 * Math.PI) / 180;
+  const lon = (-74.044500 * Math.PI) / 180;
+  const cameraAltitude = 800; // ~0.8 km above surface
 
-  // Get positions using Mars ellipsoid
+  // Get positions using Earth ellipsoid
   const cameraPositionCesium = CesiumCartesian3.fromRadians(
-    marsLon,
-    marsLat,
+    lon,
+    lat,
     cameraAltitude,
-    Ellipsoid.MARS
+    Ellipsoid.WGS84
   );
   // Transform coordinates: Cesium ECEF to Babylon
   const cameraPosition = cesiumToBabylonVec3(cameraPositionCesium);
   // Set camera position directly
   camera.position = cameraPosition;
+
+  // Look toward the ground point at the same lat/lon with 0 altitude
+  const groundTargetCesium = CesiumCartesian3.fromRadians(lon, lat, 0, Ellipsoid.WGS84);
+  const groundTarget = cesiumToBabylonVec3(groundTargetCesium);
+  camera.setTarget(groundTarget);
   // Setup keyboard controls for camera speed and tile visibility
   setupKeyboardControls(camera, scene);
 
