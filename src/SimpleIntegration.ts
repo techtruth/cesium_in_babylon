@@ -556,11 +556,27 @@ export class SimpleIntegration {
    * Disable all tile meshes; selected tiles will re-enable during their update() call.
    */
   private hideAllTileMeshes(): void {
-    const sceneMeshes = this.babylonScene?.meshes || [];
-    for (let i = 0; i < sceneMeshes.length; i++) {
-      const mesh = sceneMeshes[i];
-      if (mesh?.metadata?.isTileMesh && mesh.isEnabled()) {
-        mesh.setEnabled(false);
+    const ts: any = this.cesiumTileset as any;
+    if (!ts) return;
+
+    // Use Cesium's active tile buckets to disable known tile meshes
+    const buckets: any[] = [];
+    ['_selectedTiles', '_requestedTiles', '_requestedTilesInFlight', '_processingQueue', '_emptyTiles'].forEach(
+      (name) => {
+        const arr = ts[name];
+        if (Array.isArray(arr)) buckets.push(...arr);
+      }
+    );
+
+    const seen = new Set<any>();
+    for (let i = 0; i < buckets.length; i++) {
+      const tile = buckets[i];
+      if (!tile || seen.has(tile)) continue;
+      seen.add(tile);
+      const content = tile._content;
+      if (content && typeof content.getBabylonMeshes === 'function') {
+        const meshes = content.getBabylonMeshes() || [];
+        meshes.forEach((m: any) => m?.setEnabled && m.setEnabled(false));
       }
     }
   }
