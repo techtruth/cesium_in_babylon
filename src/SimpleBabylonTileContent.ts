@@ -93,6 +93,11 @@ export class SimpleBabylonTileContent {
     }, 0);
   }
 
+  // Keep Cesium's memory accounting numeric so cache trimming works
+  get batchTableByteLength(): number {
+    return 0;
+  }
+
   get geometryByteLength(): number {
     if (!this._ready || !this._meshes) return 0;
 
@@ -107,6 +112,10 @@ export class SimpleBabylonTileContent {
     });
 
     return byteLength || this._resource?.arrayBuffer?.byteLength || 0;
+  }
+
+  get texturesByteLength(): number {
+    return 0;
   }
 
   get ready(): boolean {

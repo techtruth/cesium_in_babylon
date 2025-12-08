@@ -57,6 +57,8 @@ export class SimpleIntegration {
     this.engine = engine;
     this.babylonScene = babylonScene;
     this.ellipsoid = ellipsoid;
+    // Keep Babylon FOV vertical so it matches Cesium's expectation
+    this.camera.fovMode = Camera.FOVMODE_VERTICAL_FIXED;
 
     // Set up Cesium Ion authentication using native Cesium
     // TODO: Update with your new Cesium Ion token from https://cesium.com/ion/tokens
@@ -149,12 +151,18 @@ export class SimpleIntegration {
     const isEarth = ellipsoid === Ellipsoid.WGS84;
     const earthCap = isEarth ? ellipsoid.maximumRadius * 0.5 : this.camera.maxZ;
     const cappedFar = Math.min(this.camera.maxZ, earthCap);
-    const frustumFov = this.camera.fov;
-    // Match Mars branch: rely on raw render buffer aspect (Babylon already applied DPR to render size)
+    // Derive vertical FOV + aspect directly from the active Babylon projection matrix
+    // With vertical FOV mode, we can feed Cesium directly
     const aspectRatio = renderWidth / renderHeight;
+    // Pad horizontal FOV so fringe tiles stay selected on wide viewports
+    const edgePad = 1.4; // widen by ~40% to combat edge culling
+    const baseHorizontalFov = 2 * Math.atan(Math.tan(this.camera.fov * 0.5) * aspectRatio);
+    const paddedHorizontalFov = baseHorizontalFov * edgePad;
+    const aspectPad = 1.12; // stronger aspect inflate to push culling volume outward
+    const paddedVerticalFov = 2 * Math.atan(Math.tan(paddedHorizontalFov * 0.5) / (aspectRatio * aspectPad));
     const frustum = new PerspectiveFrustum({
-      fov: frustumFov,
-      aspectRatio: aspectRatio,
+      fov: paddedVerticalFov,
+      aspectRatio: aspectRatio * aspectPad,
       near: this.camera.minZ,
       far: cappedFar,
     });
