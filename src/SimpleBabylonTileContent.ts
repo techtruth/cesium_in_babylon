@@ -33,6 +33,14 @@ export class SimpleBabylonTileContent {
 
       result.meshes.forEach((mesh) => {
         mesh.setEnabled(false);
+        // Mark meshes (and children) so integration can toggle visibility generically
+        const tagMesh = (m: any) => {
+          m.metadata = { ...(m.metadata || {}), isTileMesh: true };
+        };
+        tagMesh(mesh);
+        if (typeof mesh.getChildMeshes === 'function') {
+          mesh.getChildMeshes().forEach((child: any) => tagMesh(child));
+        }
 
         // Ensure all materials are fully opaque (tolerate varying material types)
         const mat: any = mesh.material;
@@ -199,9 +207,8 @@ export class SimpleBabylonTileContent {
     return content;
   }
 
-  checkAndHideIfNotSelected(currentFrame: number): void {
-    if (this._lastUpdateFrame !== -1 && currentFrame - this._lastUpdateFrame >= 2) {
-      this._meshes.forEach((mesh) => mesh.isEnabled() && mesh.setEnabled(false));
-    }
+  hideTile(): void {
+    //console.log("HIDING TILE!?")
+    this._meshes.forEach((mesh) => mesh.setEnabled(false));
   }
 }

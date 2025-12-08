@@ -17,10 +17,9 @@ import * as CesiumInternal from 'cesium';
 import { SimpleBabylonTileContent } from './SimpleBabylonTileContent';
 import { babylonToCesiumVec3, cesiumMatrixToBabylonMatrix } from './coordUtils';
 
-//This can go away after PR to cesium is accepted
-//import CesiumTilesetDerived from './cesium_derived/CesiumTilesetDerived.js';
+// Use the derived Cesium3DTileset implementation (shim from upstream PR)
 // @ts-expect-error: derived Cesium tileset is plain JS without types
-import CesiumTilesetDerived from './cesium_derived/Cesium3DTileset';
+import CesiumTilesetDerived from './cesium_derived/Cesium3DTileset.js';
 
 import { DebugVisualization } from './DebugVisualization';
 
@@ -31,11 +30,15 @@ export class SimpleIntegration {
   private camera: Camera;
   private engine: Engine;
   private babylonScene: any;
+  private ellipsoid: Ellipsoid;
   private cesiumTileset?: CesiumTilesetDerived;
   private renderTilesetPassState: any;
   private frameCount: number = 0;
   private lastFrameNumber: number = 0;
   private lastCameraState: any;
+  private lastCameraPosition?: Cartesian3;
+  private lastCameraDelta: number = 0.0;
+  private lastMovementTimestamp: number = Date.now();
   private debugVisualization!: DebugVisualization;
   private addedCredits: Set<string> = new Set();
   private debugLogInterval: number = 180; // frames between debug logs to avoid spam
@@ -49,10 +52,11 @@ export class SimpleIntegration {
     }
   }
 
-  constructor(babylonScene: any, camera: Camera, engine: Engine) {
+  constructor(babylonScene: any, camera: Camera, engine: Engine, ellipsoid: Ellipsoid = Ellipsoid.WGS84) {
     this.camera = camera;
     this.engine = engine;
     this.babylonScene = babylonScene;
+    this.ellipsoid = ellipsoid;
 
     // Set up Cesium Ion authentication using native Cesium
     // TODO: Update with your new Cesium Ion token from https://cesium.com/ion/tokens
@@ -72,7 +76,7 @@ export class SimpleIntegration {
 
     this.renderTilesetPassState = new Cesium3DTilePassState({
       pass: Cesium3DTilePass.RENDER,
-      commandList: [], // Required by CesiumTilesetDerived.js
+      commandList: [], // keep for compatibility
       camera: null, // Will be set during update
       cullingVolume: null, // Will be set during update
     });
@@ -83,34 +87,81 @@ export class SimpleIntegration {
    */
   private createCesiumCamera(): any {
     const babylonPos = this.camera.position;
+    const babylonTarget = (this.camera as any).getTarget ? (this.camera as any).getTarget() : null;
+    let lookDir = babylonTarget ? babylonTarget.subtract(babylonPos) : this.camera.getDirection(Vector3.Forward());
+    if (lookDir.lengthSquared() === 0) {
+      // Fallback to camera forward if target direction is degenerate
+      lookDir = this.camera.getDirection(Vector3.Forward());
+      if (lookDir.lengthSquared() === 0) {
+        lookDir = Vector3.Forward();
+      }
+    }
+    const forward = lookDir.normalize();
 
-    // Build an orthonormal basis that respects the radial up we set each frame
-    // Babylon's forward points opposite Cesium's view direction; flip to keep frustum aligned
-    const forward = this.camera.getDirection(Vector3.Forward().scale(-1)).normalize();
-    const radialUp =
-      babylonPos.lengthSquared() > 0 ? babylonPos.clone().normalize() : new Vector3(0, 1, 0);
-    const rightVec = Vector3.Cross(radialUp, forward).normalize();
-    const upVec = Vector3.Cross(forward, rightVec).normalize();
+    const upVec = (this.camera as any).upVector ? (this.camera as any).upVector.clone() : Vector3.Up();
+    let rightVec = Vector3.Cross(forward, upVec);
+    if (rightVec.lengthSquared() === 0) {
+      // If forward and up are parallel, pick a default right
+      rightVec = Vector3.Right();
+    }
+    rightVec = rightVec.normalize();
+    // Re-orthogonalize up to ensure a proper basis
+    const correctedUp = Vector3.Cross(rightVec, forward).normalize();
 
     // Pure coordinate transformation: Babylon → Cesium ECEF 
     const position = babylonToCesiumVec3(babylonPos);
     const direction = babylonToCesiumVec3(forward);
-    const up = babylonToCesiumVec3(upVec);
+    const up = babylonToCesiumVec3(correctedUp);
     const right = babylonToCesiumVec3(rightVec);
 
-    // Create frustum
-    // Clamp far plane so the Babylon frustum doesn't include the far side of the Earth
-    const earthRadius = Ellipsoid.WGS84.maximumRadius;
-    const cappedFar = Math.min(this.camera.maxZ, earthRadius * 0.25);
+    // Track motion for Cesium's request throttling logic
+    const nowMs = Date.now();
+    const previousDelta = this.lastCameraDelta;
+    const deltaMagnitude = this.lastCameraPosition
+      ? Cartesian3.distance(position, this.lastCameraPosition)
+      : 0.0;
+    // Treat sub-meter jitter as stationary so tiny tiles are not culled while "moving"
+    const effectiveDelta = deltaMagnitude < 5 ? 0.0 : deltaMagnitude;
+    this.lastCameraPosition = Cartesian3.clone(position);
+    // Only refresh the "last moved" timestamp when there is real motion
+    if (deltaMagnitude > 0.01) {
+      this.lastMovementTimestamp = nowMs;
+    }
+    this.lastCameraDelta = deltaMagnitude;
+
+    // Use render buffer size for frustum aspect to match Cesium expectations
+    const renderWidth = this.engine.getRenderWidth();
+    const renderHeight = this.engine.getRenderHeight();
+    if (this.frameCount % this.debugLogInterval === 0) {
+      const canvas = this.engine.getRenderingCanvas();
+      const clientW = canvas?.clientWidth ?? 0;
+      const clientH = canvas?.clientHeight ?? 0;
+      const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+      console.log(
+        `[CesiumCam] renderSize=${renderWidth}x${renderHeight} clientSize=${clientW}x${clientH} dpr=${dpr} maxZ=${this.camera.maxZ}`
+      );
+    }
+
+    // Create frustum directly from Babylon camera values
+    const ellipsoid = this.ellipsoid ?? Ellipsoid.WGS84;
+    // Cap far plane for Earth to avoid overdraw/culling very distant tiles
+    const isEarth = ellipsoid === Ellipsoid.WGS84;
+    const earthCap = isEarth ? ellipsoid.maximumRadius * 0.5 : this.camera.maxZ;
+    const cappedFar = Math.min(this.camera.maxZ, earthCap);
+    const frustumFov = this.camera.fov;
+    // Match Mars branch: rely on raw render buffer aspect (Babylon already applied DPR to render size)
+    const aspectRatio = renderWidth / renderHeight;
     const frustum = new PerspectiveFrustum({
-      fov: this.camera.fov,
-      aspectRatio: this.engine.getRenderWidth() / this.engine.getRenderHeight(),
-      near: this.camera.minZ, // Now consistent: both use 0.1
+      fov: frustumFov,
+      aspectRatio: aspectRatio,
+      near: this.camera.minZ,
       far: cappedFar,
     });
 
     // Calculate cartographic position for geographic reference
-    const positionCartographic = Cartographic.fromCartesian(position, Ellipsoid.WGS84);
+    const positionCartographic = Cartographic.fromCartesian(position, ellipsoid);
+
+    const timeSinceMovedSec = Math.max((nowMs - this.lastMovementTimestamp) / 1000, 0);
 
     return {
       // Basic vectors
@@ -124,10 +175,10 @@ export class SimpleIntegration {
       directionWC: direction,
       upWC: up,
       rightWC: right,
-      // Treat camera as stable so Cesium will refine instead of deferring while "moving"
-      timeSinceMoved: Number.POSITIVE_INFINITY,
-      positionWCDeltaMagnitude: 0.0,
-      positionWCDeltaMagnitudeLastFrame: 0.0,
+      // CRITICAL: Camera movement detection properties for tile refinement
+      timeSinceMoved: timeSinceMovedSec,
+      positionWCDeltaMagnitude: effectiveDelta,
+      positionWCDeltaMagnitudeLastFrame: previousDelta,
       // Additional properties from working commit
       positionCartographic: positionCartographic,
     };
@@ -144,39 +195,52 @@ export class SimpleIntegration {
       // Use standard Cesium Ion asset loading
       const resource = await IonResource.fromAssetId(assetId);
 
-      const isGooglePhotorealistic = assetId === 2275207;
       const tilesetOptions: any = {
         show: true,
         shadows: 1,
         disableDynamicMapManager: true,
+        // Rely on Cesium defaults for photorealistic Google tiles
+        // (no skip LOD overrides, no preload overrides, default foveated SSE)
       };
-
-      // Match createGooglePhotorealistic3DTileset defaults when using the Google tileset
-      if (isGooglePhotorealistic) {
-        tilesetOptions.cacheBytes = 1536 * 1024 * 1024;
-        tilesetOptions.maximumCacheOverflowBytes = 1024 * 1024 * 1024;
-        tilesetOptions.enableCollision = true;
-      }
 
       this.cesiumTileset = (await CesiumTilesetDerived.fromUrl(resource, tilesetOptions)) as CesiumTilesetDerived;
 
       await this.cesiumTileset.readyPromise;
-      // Use Cesium default maximumScreenSpaceError (16)
-      // Keep adaptive refinements for Google tiles to smooth loading
-      if (isGooglePhotorealistic) {
-        if ('dynamicScreenSpaceError' in this.cesiumTileset) this.cesiumTileset.dynamicScreenSpaceError = true;
-        if ('dynamicScreenSpaceErrorFactor' in this.cesiumTileset) (this.cesiumTileset as any).dynamicScreenSpaceErrorFactor = 12.0;
-        if ('foveatedScreenSpaceError' in this.cesiumTileset) this.cesiumTileset.foveatedScreenSpaceError = true;
-        if ('foveatedConeSize' in this.cesiumTileset) (this.cesiumTileset as any).foveatedConeSize = 0.2;
-        if ('foveatedMinimumScreenSpaceErrorRelaxation' in this.cesiumTileset) {
-          (this.cesiumTileset as any).foveatedMinimumScreenSpaceErrorRelaxation = 1.0;
-        }
-        if ('progressiveResolutionHeightFraction' in this.cesiumTileset) {
-          this.cesiumTileset.progressiveResolutionHeightFraction = 0.3;
-        }
+      // Bias toward refining visible tiles more aggressively
+      try {
+        // Push for higher detail in the view
+        (this.cesiumTileset as any).maximumScreenSpaceError = 8;
+        (this.cesiumTileset as any).dynamicScreenSpaceError = true;
+        (this.cesiumTileset as any).dynamicScreenSpaceErrorFactor = 8.0; // less aggressive horizon drop-off
+        (this.cesiumTileset as any).progressiveResolutionHeightFraction = 0.0;
+        (this.cesiumTileset as any).foveatedScreenSpaceError = true;
+        // Cull far/ephemeral requests now that camera motion is real
+        (this.cesiumTileset as any).cullRequestsWhileMoving = true;
+        (this.cesiumTileset as any).cullRequestsWhileMovingMultiplier = 6.0;
+        (this.cesiumTileset as any).cullWithChildrenBounds = true;
+        (this.cesiumTileset as any).skipLevelOfDetail = false;
+        (this.cesiumTileset as any).immediatelyLoadDesiredLevelOfDetail = false;
+        (this.cesiumTileset as any).preloadSiblings = false;
+        (this.cesiumTileset as any).preloadAncestors = false;
+        (this.cesiumTileset as any).preloadWhenHidden = false;
+        (this.cesiumTileset as any).loadSiblings = false;
+      } catch (e) {
+        console.warn('Could not adjust tileset selection properties:', e);
       }
 
-      this.debugVisualization = new DebugVisualization(this.babylonScene, this.cesiumTileset);
+      // Log tile load failures to diagnose missing content
+      try {
+        (this.cesiumTileset as any).tileFailed.addEventListener((evt: any) => {
+          const url = evt?.url ?? evt?.url?.url;
+          const status = evt?.error?.statusCode || evt?.error?.status;
+          const message = evt?.error?.message || evt?.error;
+          console.error('[TileFailed]', status, url, message);
+        });
+      } catch (e) {
+        console.warn('Could not attach tileFailed listener:', e);
+      }
+
+      this.debugVisualization = new DebugVisualization(this.babylonScene, this.cesiumTileset, this.ellipsoid);
     } catch (error) {
       console.error(`Failed to load ${description}:`, error);
       throw error;
@@ -196,9 +260,8 @@ export class SimpleIntegration {
       return;
     }
 
-    this.frameCount++;
-
     const camera = this.createCesiumCamera();
+    const ellipsoid = this.ellipsoid ?? Ellipsoid.WGS84;
 
     let cullingVolume;
     try {
@@ -208,6 +271,8 @@ export class SimpleIntegration {
         camera.direction,
         camera.up
       );
+
+      // Keep frustum planes as computed
 
       // Validate culling volume has required methods
       if (!cullingVolume || typeof cullingVolume.computeVisibilityWithPlaneMask !== 'function') {
@@ -228,6 +293,9 @@ export class SimpleIntegration {
     this.renderTilesetPassState.cullingVolume = cullingVolume;
 
     // Complete frameState matching working commit 72dfb2e, using Cesium's default SSE
+    const frameNumber = ++this.frameCount;
+    const EllipsoidalOccluder = (CesiumInternal as any).EllipsoidalOccluder;
+    const occluder = EllipsoidalOccluder ? new EllipsoidalOccluder(ellipsoid) : undefined;
     const frameState = {
       camera: camera,
       context: {
@@ -236,11 +304,11 @@ export class SimpleIntegration {
       },
       cullingVolume: cullingVolume,
       mode: SceneMode.SCENE3D,
-      frameNumber: this.frameCount,
+      frameNumber: frameNumber,
       // CRITICAL: Add JulianDate time for BaseTraversal tile prioritization
       time: JulianDate.now(),
       // CESIUM EXACT: newFrame flag - true only for actual new frames
-      newFrame: this.frameCount !== this.lastFrameNumber,
+      newFrame: frameNumber !== this.lastFrameNumber,
       // CRITICAL: Add pass information that SkipTraversal needs
       pass: (CesiumInternal as any).Pass ? (CesiumInternal as any).Pass.RENDER : 0,
       // Let Cesium use its default maximumScreenSpaceError for Google tiles
@@ -260,10 +328,9 @@ export class SimpleIntegration {
       minimumTerrainHeight: -11000.0,
       // CRITICAL: Add afterRender function that SkipTraversal may need
       afterRender: [],
-      mapProjection: new GeographicProjection(Ellipsoid.WGS84),
-      occluder: (CesiumInternal as any).EllipsoidalOccluder
-        ? new (CesiumInternal as any).EllipsoidalOccluder(Ellipsoid.WGS84, Cartesian3.ZERO)
-        : undefined,
+      // Use planet-specific ellipsoid for projection to align culling with the active body
+      mapProjection: new GeographicProjection(this.ellipsoid),
+      occluder,
     };
     
     try {
@@ -291,14 +358,52 @@ export class SimpleIntegration {
 
       // NATIVE CESIUM PATTERN: Follow exact sequence like native Cesium Scene
       // 1. prePassesUpdate() - processes tiles in PROCESSING state to READY
+      // Ensure RequestScheduler advances when throttling is enabled
+      const RequestScheduler = (CesiumInternal as any).RequestScheduler;
+      if (RequestScheduler && typeof RequestScheduler.update === 'function') {
+        RequestScheduler.update();
+      }
       (this.cesiumTileset as any).prePassesUpdate(frameState);
-          
+
+      // 1.5 Clear all visibility; only tiles selected this frame will re-enable in their update()
+      this.hideAllTileMeshes();
+
       // 2. main update() - traversal, selection, and content loading
       this.cesiumTileset.update(frameState);
 
-      // 2.1. NATIVE CLEANUP PATTERN: Hide meshes for unselected tiles
-      // This mimics Cesium's native behavior where unselected tiles don't render
-      this.cleanupUnselectedTileMeshes(frameState.frameNumber);
+      // 2.1 Show only the tiles selected this frame that are ready
+      const selectedSet = new Set((this.cesiumTileset as any)._selectedTiles || []);
+      const readySelected = new Set<any>();
+      selectedSet.forEach((tile: any) => {
+        const content = tile?._content;
+        const meshes = content?.getBabylonMeshes?.() || [];
+        if (content?.ready && meshes.length > 0) {
+          readySelected.add(tile);
+        }
+      });
+    
+      // Debug selection counts to understand missing tiles
+      if (this.frameCount % this.debugLogInterval === 0) {
+        const stats = (this.cesiumTileset as any)._statistics;
+        const visited = stats?.visited;
+        const reqStats = this.getRequestSchedulerStats();
+        const requested = ((this.cesiumTileset as any)._requestedTiles || []).length;
+        const inFlight = ((this.cesiumTileset as any)._requestedTilesInFlight || []).length;
+        const processing = ((this.cesiumTileset as any)._processingQueue || []).length;
+        const emptyTiles = ((this.cesiumTileset as any)._emptyTiles || []).length;
+        const sample = Array.from(selectedSet).map((tile: any) => {
+          const ref = tile.refine ?? tile._refine;
+          const sse = tile._screenSpaceError ?? tile.screenSpaceError;
+          const children = tile.children || [];
+          const readyKids = children.filter((c: any) => c._content?.ready).length;
+          return `d=${tile._depth} ref=${ref} sse=${sse?.toFixed?.(2) ?? sse} kids=${readyKids}/${children.length}`;
+        });
+        console.log(
+          `[Tileset dbg] frame=${frameNumber} selected=${selectedSet.size} ready=${readySelected.size} visited=${visited} requested=${requested} inFlight=${inFlight} processing=${processing} empty=${emptyTiles} ${reqStats} samples=[${sample.join(
+            ' | '
+          )}]`
+        );
+      }
 
       // 3. postPassesUpdate() - cleanup, request scheduling, cache management
       (this.cesiumTileset as any).postPassesUpdate(frameState);
@@ -307,35 +412,9 @@ export class SimpleIntegration {
       this.applyTransformsToSelectedTiles();
 
       // 5. Update debug visualizations
-      this.debugVisualization?.updateVisualizations(camera, frameState.frameNumber);
+      //this.debugVisualization?.updateVisualizations(camera, frameState.frameNumber);
       this.lastCameraState = camera;
       this.lastFrameNumber = frameState.frameNumber;
-
-      // 6. Throttled debug logging to inspect refinement without spamming
-      if (this.frameCount % this.debugLogInterval === 0) {
-        const selected = (this.cesiumTileset as any)._selectedTiles;
-        const requested = (this.cesiumTileset as any)._requestedTiles;
-        const maximumSSE = (this.cesiumTileset as any).maximumScreenSpaceError;
-        const memoryAdjustedSSE = (this.cesiumTileset as any)._memoryAdjustedScreenSpaceError;
-        const dynamicSSE = (this.cesiumTileset as any).dynamicScreenSpaceError;
-        let minLevel = Number.POSITIVE_INFINITY;
-        let maxLevel = -1;
-        let maxTileSSE = 0;
-        selected?.forEach((t: any) => {
-          if (typeof t._level === 'number') {
-            minLevel = Math.min(minLevel, t._level);
-            maxLevel = Math.max(maxLevel, t._level);
-          }
-          const tileSSE = t._screenSpaceErrorProgressiveResolution ?? t._screenSpaceError ?? 0;
-          if (tileSSE > maxTileSSE) maxTileSSE = tileSSE;
-        });
-        if (!Number.isFinite(minLevel)) minLevel = 0;
-        console.log(
-          `[Tileset dbg] frame=${this.frameCount} selected=${selected?.length ?? 0} requested=${requested?.length ?? 0} levels=${minLevel}-${maxLevel} maxTileSSE=${maxTileSSE.toFixed(
-            2
-          )} maxSSE=${maximumSSE} memAdjSSE=${memoryAdjustedSSE} dynamicSSE=${dynamicSSE}`
-        );
-      }
     } catch (error) {
       console.error('Error updating tileset:', error);
     }
@@ -384,20 +463,10 @@ export class SimpleIntegration {
     const RequestScheduler = (CesiumInternal as any).RequestScheduler;
     if (!RequestScheduler) return;
 
-    // Allow plenty of outstanding requests but avoid overwhelming the pipeline
-    RequestScheduler.maximumRequests = 90;
-    RequestScheduler.maximumRequestsPerServer = 32;
-
-    if ('throttleRequests' in RequestScheduler) {
-      RequestScheduler.throttleRequests = false;
-    }
-
-    const schedulerProps = ['requestDelayOnFailure', 'maximumRequestDelay', 'minimumRequestDelay'];
-    schedulerProps.forEach((prop) => {
-      if (prop in RequestScheduler && RequestScheduler[prop] > 100) {
-        RequestScheduler[prop] = Math.min(100, RequestScheduler[prop] / 2);
-      }
-    });
+    // Allow more concurrency; let Cesium schedule without throttling
+    RequestScheduler.maximumRequests = 64;
+    RequestScheduler.maximumRequestsPerServer = 16;
+    RequestScheduler.throttleRequests = false;
   }
 
   /**
@@ -410,35 +479,100 @@ export class SimpleIntegration {
   }
 
   /**
-   * NATIVE CESIUM CLEANUP PATTERN: Hide meshes for tiles not selected by Cesium
-   * This follows the exact pattern discovered from Model3DTileContent research:
-   * - Cesium only calls update() on selected tiles via updateTiles()
-   * - For unselected tiles, we need to clean up and hide their meshes
-   * - This mimics how Cesium's native models get hidden when their tiles aren't selected
+   * Hide parents once children are ready, to mimic REPLACE refinement.
    */
-  private cleanupUnselectedTileMeshes(currentFrame: number): void {
+  private cleanupUnselectedTileMeshes(selectedSet: Set<any>): void {
     if (!this.cesiumTileset || !this.cesiumTileset.root) return;
 
-    // Traverse all tiles with content to check their selection state
-    const visitTile = (tile: any) => {
-      if (
-        tile._content &&
-        tile._content.constructor.name === 'SimpleBabylonTileContent' &&
-        typeof tile._content.checkAndHideIfNotSelected === 'function'
-      ) {
-        // Call the native cleanup pattern on each tile content
-        tile._content.checkAndHideIfNotSelected(currentFrame);
+    const hasSelectedReadyDescendant = (tile: any): boolean => {
+      if (!tile?.children) return false;
+      for (let i = 0; i < tile.children.length; i++) {
+        const child = tile.children[i];
+        const cSelected = selectedSet.has(child);
+        const cContent = child._content;
+        const meshes = cContent?.getBabylonMeshes?.() || [];
+        const cReady = cContent?.ready && meshes.some((m: any) => m.isEnabled && m.isEnabled());
+        if ((cSelected && cReady) || hasSelectedReadyDescendant(child)) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    const visit = (tile: any) => {
+      const content = tile?._content;
+      const isSimpleContent =
+        content &&
+        content.constructor?.name === 'SimpleBabylonTileContent' &&
+        typeof content.getBabylonMeshes === 'function';
+
+      if (isSimpleContent) {
+        const meshes = content.getBabylonMeshes() || [];
+        const isSelected = selectedSet.has(tile);
+        const descendantReady = hasSelectedReadyDescendant(tile);
+        const shouldHide = !isSelected && descendantReady;
+        meshes.forEach((m: any) => m?.setEnabled && m.setEnabled(!shouldHide));
       }
 
-      // Recursively visit children
-      if (tile.children && tile.children.length > 0) {
-        tile.children.forEach(visitTile);
+      if (tile?.children && tile.children.length > 0) {
+        tile.children.forEach(visit);
       }
     };
 
-    // Start traversal from root
-    visitTile(this.cesiumTileset.root);
+    visit(this.cesiumTileset.root);
   }
+
+  private countReadyBabylonTiles(): { readyCount: number; totalCount: number } {
+    let readyCount = 0;
+    let totalCount = 0;
+    if (!this.cesiumTileset || !this.cesiumTileset.root) return { readyCount, totalCount };
+
+    const stack: any[] = [this.cesiumTileset.root];
+    while (stack.length) {
+      const tile = stack.pop();
+      const content = tile?._content;
+      if (
+        content &&
+        content.constructor?.name === 'SimpleBabylonTileContent' &&
+        typeof content.getBabylonMeshes === 'function'
+      ) {
+        totalCount++;
+        const meshes = content.getBabylonMeshes() || [];
+        const isReady = content.ready && meshes.some((m: any) => m?.isEnabled && m.isEnabled());
+        if (isReady) readyCount++;
+      }
+      if (tile?.children && tile.children.length > 0) {
+        for (let i = 0; i < tile.children.length; i++) stack.push(tile.children[i]);
+      }
+    }
+    return { readyCount, totalCount };
+  }
+
+  /**
+   * Disable all tile meshes; selected tiles will re-enable during their update() call.
+   */
+  private hideAllTileMeshes(): void {
+    const sceneMeshes = this.babylonScene?.meshes || [];
+    for (let i = 0; i < sceneMeshes.length; i++) {
+      const mesh = sceneMeshes[i];
+      if (mesh?.metadata?.isTileMesh && mesh.isEnabled()) {
+        mesh.setEnabled(false);
+      }
+    }
+  }
+
+  /**
+   * Inspect RequestScheduler to see if we are throttling tile requests.
+   */
+  private getRequestSchedulerStats(): string {
+    const rs = (CesiumInternal as any).RequestScheduler;
+    if (!rs) return '';
+    const active = rs.numberOfActiveRequests ?? 0;
+    const pending = Array.isArray(rs.requests) ? rs.requests.length : 0;
+    const deferred = Array.isArray(rs.deferredRequests) ? rs.deferredRequests.length : 0;
+    return `reqs active=${active} pending=${pending} deferred=${deferred}`;
+  }
+
 
   /**
    * Apply transforms to selected tiles' meshes during render loop

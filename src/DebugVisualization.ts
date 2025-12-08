@@ -1,4 +1,5 @@
-import { Scene, MeshBuilder, StandardMaterial, Color3, Vector3 } from '@babylonjs/core';
+import { Scene, MeshBuilder, StandardMaterial, Color3, Vector3, Mesh } from '@babylonjs/core';
+import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
 import { Ellipsoid } from 'cesium';
 import { cesiumToBabylonVec3 } from './coordUtils';
 
@@ -15,6 +16,7 @@ export class DebugVisualization {
   private frustumVisualization: any = null;
   private boundingVolumeWireframes: any[] = [];
   private frustumWireframes: any[] = [];
+  private frustumPlanes: any[] = [];
   private cameraOrientationLines: any[] = [];
   private lastFrustumUpdate = 0;
 
@@ -80,6 +82,7 @@ export class DebugVisualization {
       this.createFrustumWireframe();
     } else {
       this.clearFrustumWireframes();
+      this.clearFrustumPlanes();
     }
   }
 
@@ -185,6 +188,8 @@ export class DebugVisualization {
 
   private visualizeCesiumFrustum(cesiumCamera: any, frustum: any): void {
     try {
+      this.clearFrustumWireframes();
+      this.clearFrustumPlanes();
       if (this.frustumVisualization) {
         this.frustumVisualization.dispose();
         this.frustumVisualization = null;
@@ -200,7 +205,8 @@ export class DebugVisualization {
         { size: 0.1 },
         this.babylonScene
       );
-      this.frustumVisualization.setEnabled(false);
+      this.frustumVisualization.isPickable = false;
+      this.frustumVisualization.setEnabled(true);
 
       const frustumMaterial = new StandardMaterial('frustumMaterial', this.babylonScene);
       frustumMaterial.emissiveColor = new Color3(1, 0, 1);
@@ -208,6 +214,7 @@ export class DebugVisualization {
       frustumMaterial.backFaceCulling = false;
 
       this.drawFrustumLines(babylonCorners, frustumMaterial, this.babylonScene);
+      this.drawFrustumPlanes(babylonCorners, this.babylonScene);
     } catch (error) {
       console.error('❌ Failed to create frustum visualization:', error);
     }
@@ -336,10 +343,22 @@ export class DebugVisualization {
   }
 
   private createBoundingVolumeWireframes(): void {
-    const selectedTiles = this.cesiumTileset._selectedTiles;
-    if (!selectedTiles?.length) return;
+    // Show bounding volumes for a broader set than just selected
+    // Walk the entire tree so every tile gets a bounding sphere
+    if (!this.cesiumTileset?.root) return;
 
-    selectedTiles.forEach((tile: any, index: number) => {
+    const stack: any[] = [this.cesiumTileset.root];
+    const tiles: any[] = [];
+    while (stack.length) {
+      const tile = stack.pop();
+      if (!tile) continue;
+      tiles.push(tile);
+      if (tile.children && tile.children.length > 0) {
+        for (let i = 0; i < tile.children.length; i++) stack.push(tile.children[i]);
+      }
+    }
+
+    tiles.forEach((tile: any, index: number) => {
       const boundingVolume = tile.boundingVolume;
       if (!boundingVolume?.boundingSphere) return;
 
@@ -349,8 +368,10 @@ export class DebugVisualization {
 
       const babylonCenter = new Vector3(cesiumCenter.x, cesiumCenter.z, -cesiumCenter.y);
 
+      const depth = tile._depth ?? tile.level ?? tile._tileId?.level ?? 0;
+
       const wireframeSphere = MeshBuilder.CreateSphere(
-        `boundingVolume_${index}`,
+        `boundingVolume_${index}_L${depth}`,
         { diameter: cesiumRadius * 2, segments: 8 },
         this.babylonScene
       );
@@ -358,14 +379,31 @@ export class DebugVisualization {
 
       const material = new StandardMaterial(`boundingMaterial_${index}`, this.babylonScene);
       material.wireframe = true;
-      const depthNormalized = Math.min(tile._depth / 10, 1);
-      // Dark red (0.8, 0.1, 0.1) to light blue (0.3, 0.8, 1.0)
-      const red = 0.8 - depthNormalized * 0.5; // 0.8 -> 0.3
-      const green = 0.1 + depthNormalized * 0.7; // 0.1 -> 0.8
-      const blue = 0.1 + depthNormalized * 0.9; // 0.1 -> 1.0
-      material.emissiveColor = new Color3(red, green, blue);
       material.disableLighting = true;
+
+      const isSelected = (this.cesiumTileset._selectedTiles || []).includes(tile);
+      if (isSelected) {
+        const dn = Math.min(Math.max(depth / 12, 0), 1); // normalized depth
+        // Far (higher depth) = green, near (lower depth) = teal
+        const r = 0.0 + 0.0 * (1 - dn);
+        const g = 0.4 + 0.6 * (1 - dn);
+        const b = 0.3 + 0.3 * (1 - dn);
+        material.emissiveColor = new Color3(r, g, b);
+        material.alpha = 1.0;
+      } else {
+        // Cached/non-selected: far = yellow, near = red
+        const dn = Math.min(Math.max(depth / 12, 0), 1);
+        const r = 1.0;
+        const g = 1.0 - 0.6 * (1 - dn); // 1 -> 0.4 as it gets closer
+        const b = 0.0;
+        material.emissiveColor = new Color3(r, g, b);
+        material.alpha = 0.2; // make cached tiles much more transparent
+      }
+
       wireframeSphere.material = material;
+
+      // Store depth in metadata for easy inspection
+      wireframeSphere.metadata = { ...(wireframeSphere.metadata || {}), tileDepth: depth };
 
       this.boundingVolumeWireframes.push(wireframeSphere);
     });
@@ -431,5 +469,73 @@ export class DebugVisualization {
       this.frustumVisualization.dispose();
       this.frustumVisualization = null;
     }
+  }
+
+  private drawFrustumPlanes(babylonCorners: Vector3[], scene: Scene): void {
+    // Build six quads: near, far, left, right, top, bottom
+    const planes = [
+      [1, 2, 3, 4], // near
+      [5, 6, 7, 8], // far
+      [1, 5, 8, 4], // left
+      [2, 6, 7, 3], // right
+      [4, 3, 7, 8], // top
+      [1, 2, 6, 5], // bottom
+    ];
+
+    const colors = [
+      new Color3(1, 0, 0),   // near - red
+      new Color3(0, 1, 0),   // far - green
+      new Color3(0, 0, 1),   // left - blue
+      new Color3(1, 1, 0),   // right - yellow
+      new Color3(1, 0, 1),   // top - magenta
+      new Color3(0, 1, 1),   // bottom - cyan
+    ];
+
+    planes.forEach((indices, idx) => {
+      const name = `frustumPlane_${idx}`;
+      const [i0, i1, i2, i3] = indices;
+      const p0 = babylonCorners[i0];
+      const p1 = babylonCorners[i1];
+      const p2 = babylonCorners[i2];
+      const p3 = babylonCorners[i3];
+
+      const quad = new Mesh(name, scene);
+      const positions = [
+        p0.x, p0.y, p0.z,
+        p1.x, p1.y, p1.z,
+        p2.x, p2.y, p2.z,
+        p3.x, p3.y, p3.z,
+      ];
+      const indicesArr = [0, 1, 2, 0, 2, 3];
+      const vertexData = new VertexData();
+      vertexData.positions = positions;
+      vertexData.indices = indicesArr;
+      vertexData.normals = [];
+      VertexData.ComputeNormals(positions, indicesArr, vertexData.normals);
+      vertexData.applyToMesh(quad);
+
+      quad.alphaIndex = 0;
+      quad.enableEdgesRendering = false;
+      quad.isPickable = false;
+      quad.renderingGroupId = undefined as any;
+      const mat = new StandardMaterial(`${name}_mat`, scene);
+      const color = colors[idx % colors.length];
+      mat.emissiveColor = color;
+      mat.diffuseColor = color;
+      mat.specularColor = new Color3(0, 0, 0);
+      mat.alpha = 0.25; // translucent so tiles remain visible
+      mat.disableLighting = true;
+      mat.backFaceCulling = false;
+      mat.disableDepthWrite = true; // do not occlude scene content
+      mat.zOffset = 0;
+      quad.material = mat;
+      this.frustumPlanes.push(quad);
+      if (this.frustumVisualization) quad.parent = this.frustumVisualization;
+    });
+  }
+
+  private clearFrustumPlanes(): void {
+    this.frustumPlanes.forEach((m) => m.dispose());
+    this.frustumPlanes = [];
   }
 }

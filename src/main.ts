@@ -19,6 +19,48 @@ import { SimpleIntegration } from './SimpleIntegration';
 import { Cartesian3 as CesiumCartesian3, Ellipsoid } from 'cesium';
 import { cesiumToBabylonVec3 } from './coordUtils';
 
+type PlanetName = 'earth' | 'mars' | 'moon';
+
+type PlanetConfig = {
+  ellipsoid: Ellipsoid;
+  assetId: number;
+  skyColor: [number, number, number, number];
+  // Default camera target (radians) and altitude (meters) for this planet
+  defaultLatRad: number;
+  defaultLonRad: number;
+  defaultAltitude: number;
+};
+
+const PLANET_CONFIGS: Record<PlanetName, PlanetConfig> = {
+  earth: {
+    ellipsoid: Ellipsoid.WGS84,
+    assetId: 2275207,
+    skyColor: [0.8, 0.9, 1.0, 1.0],
+    // Statue of Liberty, NYC
+    defaultLatRad: (40.6892 * Math.PI) / 180,
+    defaultLonRad: (-74.0445 * Math.PI) / 180,
+    defaultAltitude: 1500,
+  }, // Google Photorealistic 3D Tiles
+  mars: {
+    ellipsoid: new Ellipsoid(3396190.0, 3396190.0, 3376200.0),
+    assetId: 3644333,
+    skyColor: [0.85, 0.6, 0.45, 1.0],
+    // Jezero Crater region (Perseverance rover area)
+    defaultLatRad: (18.38 * Math.PI) / 180,
+    defaultLonRad: (77.58 * Math.PI) / 180,
+    defaultAltitude: 3000,
+  }, // Mars asset
+  moon: {
+    ellipsoid: Ellipsoid.MOON,
+    assetId: 2684829,
+    skyColor: [0.6, 0.6, 0.65, 1.0],
+    // Apollo 11 landing site
+    defaultLatRad: (0.67408 * Math.PI) / 180,
+    defaultLonRad: (23.47297 * Math.PI) / 180,
+    defaultAltitude: 1500,
+  }, // Moon photorealistic tileset
+};
+
 window.addEventListener('DOMContentLoaded', async () => {
   // DOM loaded, starting app initialization
 
@@ -32,20 +74,25 @@ window.addEventListener('DOMContentLoaded', async () => {
     useLargeWorldRendering: true,
   });
 
-  // Handle window resize and dev console open/close
+  // Keep render buffer in sync with device pixel ratio to match Cesium's expectations
   const handleResize = () => {
     const displayWidth = canvas.clientWidth;
     const displayHeight = canvas.clientHeight;
-
-    if (canvas.width !== displayWidth || canvas.height !== displayHeight) {
-      canvas.width = displayWidth;
-      canvas.height = displayHeight;
+    const dpr = window.devicePixelRatio || 1;
+    const renderWidth = Math.floor(displayWidth * dpr);
+    const renderHeight = Math.floor(displayHeight * dpr);
+    if (canvas.width !== renderWidth || canvas.height !== renderHeight) {
+      canvas.width = renderWidth;
+      canvas.height = renderHeight;
     }
-
-    engine.resize(); // Then resize the engine
+    engine.setSize(renderWidth, renderHeight, false);
   };
   handleResize();
   window.addEventListener('resize', handleResize);
+
+  // Select target planet
+  const planet: PlanetName = 'earth';
+  const planetConfig = PLANET_CONFIGS[planet];
 
   function createScene(): Scene {
     const scene = new Scene(engine);
@@ -57,8 +104,8 @@ window.addEventListener('DOMContentLoaded', async () => {
     const camera = new UniversalCamera('camera', new Vector3(0, 0, 0), scene);
     camera.attachControl(canvas, true);
 
-    // CRITICAL: Match Cesium's exact FOV for proper tile culling
-    camera.fov = Math.PI / 3; // 60 degrees - MUST match Cesium's PerspectiveFrustum.fov
+    // CRITICAL: Match Cesium's default FOV (~60 degrees) for proper tile culling
+    camera.fov = Math.PI / 3; // 60 degrees
 
     // Enable WASD controls
     camera.keysUp = [87]; // W
@@ -68,11 +115,16 @@ window.addEventListener('DOMContentLoaded', async () => {
     camera.keysUpward = [81]; // Q
     camera.keysDownward = [69]; // E
 
-    camera.minZ = 0.1; // Near: 0.1m
-    camera.maxZ = 200000000; // Far: 200,000km
+    // Enable mouse controls for navigation (was disabled in Mars branch)
+    // (Leave keyboard controls active as well)
 
-    // Set lighter background color
-    scene.clearColor.set(0.8, 0.9, 1.0, 1.0); // Light blue sky color
+    camera.minZ = 0.1; // Near: 0.1m
+    // Use a very far plane to avoid clipping/culling at the horizon (match Mars branch)
+    camera.maxZ = 200000000; // 200,000 km
+
+    // Set background color per planet
+    const [r, g, b, a] = planetConfig.skyColor;
+    scene.clearColor.set(r, g, b, a);
 
     return scene;
   }
@@ -104,22 +156,22 @@ window.addEventListener('DOMContentLoaded', async () => {
   }
 
   // Create the simple integration (Ion auth now handled internally)
-  const integration = new SimpleIntegration(scene, camera, engine);
+  const integration = new SimpleIntegration(scene, camera, engine, planetConfig.ellipsoid);
 
-  // Earth photorealistic tileset from Cesium ion (Google 3D Tiles)
-  await integration.loadCesiumIonAsset(2275207, 'Google Photorealistic 3D Tiles');
+  // Photorealistic tileset for chosen planet
+  await integration.loadCesiumIonAsset(planetConfig.assetId, 'Photorealistic 3D Tiles');
 
-  // Initial Earth view: Statue of Liberty, modest altitude
-  const lat = (40.689249 * Math.PI) / 180;
-  const lon = (-74.044500 * Math.PI) / 180;
-  const cameraAltitude = 800; // ~0.8 km above surface
+  // Initial view: planet-configured default
+  const lat = planetConfig.defaultLatRad;
+  const lon = planetConfig.defaultLonRad;
+  const cameraAltitude = planetConfig.defaultAltitude;
 
-  // Get positions using Earth ellipsoid
+  // Get positions using selected ellipsoid
   const cameraPositionCesium = CesiumCartesian3.fromRadians(
     lon,
     lat,
     cameraAltitude,
-    Ellipsoid.WGS84
+    planetConfig.ellipsoid
   );
   // Transform coordinates: Cesium ECEF to Babylon
   const cameraPosition = cesiumToBabylonVec3(cameraPositionCesium);
@@ -127,7 +179,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   camera.position = cameraPosition;
 
   // Look toward the ground point at the same lat/lon with 0 altitude
-  const groundTargetCesium = CesiumCartesian3.fromRadians(lon, lat, 0, Ellipsoid.WGS84);
+  const groundTargetCesium = CesiumCartesian3.fromRadians(lon, lat, 0, planetConfig.ellipsoid);
   const groundTarget = cesiumToBabylonVec3(groundTargetCesium);
   camera.setTarget(groundTarget);
   // Setup keyboard controls for camera speed and tile visibility
@@ -137,6 +189,13 @@ window.addEventListener('DOMContentLoaded', async () => {
   engine.runRenderLoop(() => {
     // Set camera's up vector to point away from planet center (so down points toward planet)
     camera.upVector = camera.position.clone().normalize();
+    // Log render buffer size occasionally for debugging viewport coverage
+    const fc = (integration as any).frameCount ?? 0;
+    if (fc % 300 === 0) {
+      console.log(
+        `[Babylon] renderSize=${engine.getRenderWidth()}x${engine.getRenderHeight()} client=${canvas.clientWidth}x${canvas.clientHeight}`
+      );
+    }
     // Update the integration every frame (let Cesium work)
     integration.update();
     scene.render();
