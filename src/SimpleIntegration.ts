@@ -212,12 +212,12 @@ export class SimpleIntegration {
         // Use Cesium default SSE; rely on dynamic/foveated biasing for detail
         (this.cesiumTileset as any).maximumScreenSpaceError = 16;
         (this.cesiumTileset as any).dynamicScreenSpaceError = true;
-        (this.cesiumTileset as any).dynamicScreenSpaceErrorFactor = 8.0; // less aggressive horizon drop-off
-        (this.cesiumTileset as any).progressiveResolutionHeightFraction = 0.0;
+        (this.cesiumTileset as any).dynamicScreenSpaceErrorFactor = 24.0;
+        (this.cesiumTileset as any).progressiveResolutionHeightFraction = 0.3;
         (this.cesiumTileset as any).foveatedScreenSpaceError = true;
-        // Disable request culling while moving to avoid starving small center tiles
-        (this.cesiumTileset as any).cullRequestsWhileMoving = false;
-        (this.cesiumTileset as any).cullRequestsWhileMovingMultiplier = 0.0;
+        // Restore request culling defaults while moving
+        (this.cesiumTileset as any).cullRequestsWhileMoving = true;
+        (this.cesiumTileset as any).cullRequestsWhileMovingMultiplier = 60.0;
         (this.cesiumTileset as any).cullWithChildrenBounds = true;
         (this.cesiumTileset as any).skipLevelOfDetail = false;
         (this.cesiumTileset as any).immediatelyLoadDesiredLevelOfDetail = false;
@@ -467,10 +467,10 @@ export class SimpleIntegration {
     const RequestScheduler = (CesiumInternal as any).RequestScheduler;
     if (!RequestScheduler) return;
 
-    // Allow more concurrency; let Cesium schedule without throttling
-    RequestScheduler.maximumRequests = 64;
-    RequestScheduler.maximumRequestsPerServer = 16;
-    RequestScheduler.throttleRequests = false;
+    // Restore Cesium defaults for request scheduling
+    RequestScheduler.maximumRequests = 10;
+    RequestScheduler.maximumRequestsPerServer = 6;
+    RequestScheduler.throttleRequests = true;
   }
 
   /**
