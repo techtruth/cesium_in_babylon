@@ -36,10 +36,10 @@ const PLANET_CONFIGS: Record<PlanetName, PlanetConfig> = {
     ellipsoid: Ellipsoid.WGS84,
     assetId: 2275207,
     skyColor: [0.8, 0.9, 1.0, 1.0],
-    // Statue of Liberty, NYC
-    defaultLatRad: (40.6892 * Math.PI) / 180,
-    defaultLonRad: (-74.0445 * Math.PI) / 180,
-    defaultAltitude: 1500,
+    // Times Square, Midtown Manhattan (dense urban coverage)
+    defaultLatRad: (40.7580 * Math.PI) / 180,
+    defaultLonRad: (-73.9855 * Math.PI) / 180,
+    defaultAltitude: 1200,
   }, // Google Photorealistic 3D Tiles
   mars: {
     ellipsoid: new Ellipsoid(3396190.0, 3396190.0, 3376200.0),

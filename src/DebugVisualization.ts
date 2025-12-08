@@ -391,13 +391,9 @@ export class DebugVisualization {
         material.emissiveColor = new Color3(r, g, b);
         material.alpha = 1.0;
       } else {
-        // Cached/non-selected: far = yellow, near = red
-        const dn = Math.min(Math.max(depth / 12, 0), 1);
-        const r = 1.0;
-        const g = 1.0 - 0.6 * (1 - dn); // 1 -> 0.4 as it gets closer
-        const b = 0.0;
-        material.emissiveColor = new Color3(r, g, b);
-        material.alpha = 0.2; // make cached tiles much more transparent
+        // Cached/non-selected: uniform yellow, highly transparent
+        material.emissiveColor = new Color3(1.0, 1.0, 0.0);
+        material.alpha = 0.1;
       }
 
       wireframeSphere.material = material;

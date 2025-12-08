@@ -116,18 +116,19 @@ export class SimpleIntegration {
 
     // Track motion for Cesium's request throttling logic
     const nowMs = Date.now();
-    const previousDelta = this.lastCameraDelta;
-    const deltaMagnitude = this.lastCameraPosition
+    const previousDeltaRaw = this.lastCameraDelta;
+    const deltaMagnitudeRaw = this.lastCameraPosition
       ? Cartesian3.distance(position, this.lastCameraPosition)
       : 0.0;
-    // Treat sub-meter jitter as stationary so tiny tiles are not culled while "moving"
-    const effectiveDelta = deltaMagnitude < 5 ? 0.0 : deltaMagnitude;
     this.lastCameraPosition = Cartesian3.clone(position);
-    // Only refresh the "last moved" timestamp when there is real motion
-    if (deltaMagnitude > 0.01) {
+    // Treat sub-meter jitter as stationary so tiny tiles are not culled while "moving"
+    const effectiveDelta = deltaMagnitudeRaw < 5 ? 0.0 : deltaMagnitudeRaw;
+    const previousDelta = previousDeltaRaw < 5 ? 0.0 : previousDeltaRaw;
+    if (effectiveDelta > 0.0) {
       this.lastMovementTimestamp = nowMs;
     }
-    this.lastCameraDelta = deltaMagnitude;
+    // Persist the effective delta so "last frame" decays as soon as motion stops
+    this.lastCameraDelta = effectiveDelta;
 
     // Use render buffer size for frustum aspect to match Cesium expectations
     const renderWidth = this.engine.getRenderWidth();
@@ -208,15 +209,15 @@ export class SimpleIntegration {
       await this.cesiumTileset.readyPromise;
       // Bias toward refining visible tiles more aggressively
       try {
-        // Push for higher detail in the view
-        (this.cesiumTileset as any).maximumScreenSpaceError = 8;
+        // Use Cesium default SSE; rely on dynamic/foveated biasing for detail
+        (this.cesiumTileset as any).maximumScreenSpaceError = 16;
         (this.cesiumTileset as any).dynamicScreenSpaceError = true;
         (this.cesiumTileset as any).dynamicScreenSpaceErrorFactor = 8.0; // less aggressive horizon drop-off
         (this.cesiumTileset as any).progressiveResolutionHeightFraction = 0.0;
         (this.cesiumTileset as any).foveatedScreenSpaceError = true;
-        // Cull far/ephemeral requests now that camera motion is real
-        (this.cesiumTileset as any).cullRequestsWhileMoving = true;
-        (this.cesiumTileset as any).cullRequestsWhileMovingMultiplier = 6.0;
+        // Disable request culling while moving to avoid starving small center tiles
+        (this.cesiumTileset as any).cullRequestsWhileMoving = false;
+        (this.cesiumTileset as any).cullRequestsWhileMovingMultiplier = 0.0;
         (this.cesiumTileset as any).cullWithChildrenBounds = true;
         (this.cesiumTileset as any).skipLevelOfDetail = false;
         (this.cesiumTileset as any).immediatelyLoadDesiredLevelOfDetail = false;
@@ -296,6 +297,8 @@ export class SimpleIntegration {
     const frameNumber = ++this.frameCount;
     const EllipsoidalOccluder = (CesiumInternal as any).EllipsoidalOccluder;
     const occluder = EllipsoidalOccluder ? new EllipsoidalOccluder(ellipsoid) : undefined;
+    const pixelRatio = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+
     const frameState = {
       camera: camera,
       context: {
@@ -320,7 +323,7 @@ export class SimpleIntegration {
         },
       },
       // Additional properties from working commit 72dfb2e:
-      pixelRatio: 1.0,
+      pixelRatio,
       verticalExaggeration: 1.0,
       verticalExaggerationRelativeHeight: 0.0,
       commandList: [],
@@ -331,6 +334,7 @@ export class SimpleIntegration {
       // Use planet-specific ellipsoid for projection to align culling with the active body
       mapProjection: new GeographicProjection(this.ellipsoid),
       occluder,
+      pixelRatio,
     };
     
     try {
