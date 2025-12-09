@@ -249,7 +249,7 @@ export class SimpleIntegration {
         console.warn('Could not attach tileFailed listener:', e);
       }
 
-      this.debugVisualization = new DebugVisualization(this.babylonScene, this.cesiumTileset);
+      this.debugVisualization = new DebugVisualization(this.babylonScene, this.cesiumTileset, this.ellipsoid);
     } catch (error) {
       console.error(`Failed to load ${description}:`, error);
       throw error;

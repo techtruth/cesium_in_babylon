@@ -111,10 +111,8 @@ window.addEventListener('DOMContentLoaded', async () => {
       // Aggressive linear growth using golden ratio multiplier per km
       const altKm = alt / 1000;
       const phi = (1 + Math.sqrt(5)) / 2;
-      // Boost near-surface with linear term, still ramps quadratically at altitude
-      const linear = 5 * altKm;
-      const quad = 5 * altKm * altKm;
-      const scale = Math.min(1 + linear + quad, 5000);
+      // Simpler linear growth with altitude (km)
+      const scale = Math.min(1 + 10 * altKm, 10000);
       return baseSpeed * scale;
     }, baseDistanceForSpeed);
     camera.attachControl(canvas, true);
@@ -149,7 +147,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   // Keyboard event handler for camera speed and tile visibility controls
   function setupKeyboardControls(camera: BaseCam, scene: Scene) {
     // Exponential speed curve (doubling per level) to avoid hard-coded speed steps
-    const baseSpeed = 2.7778; // ~10 km/h in m/s
+    const baseSpeed = 41.6667; // meters/sec (~150 km/h, Babylon units are meters)
     let speedPower = 0; // 0 => baseSpeed
     const applySpeed = () => {
       camera.speed = baseSpeed * Math.pow(2, speedPower);

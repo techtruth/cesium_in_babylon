@@ -21,10 +21,15 @@ export class DebugVisualization {
   private lastFrustumUpdate = 0;
   private axisMarkers: Mesh[] = [];
   private axisLabels: Mesh[] = [];
+  private ellipsoid: Ellipsoid;
+  private planetColor: Color3;
 
-  constructor(babylonScene: Scene, cesiumTileset: any) {
+  constructor(babylonScene: Scene, cesiumTileset: any, ellipsoid: Ellipsoid, planetColor?: Color3) {
     this.babylonScene = babylonScene;
     this.cesiumTileset = cesiumTileset;
+    this.ellipsoid = ellipsoid;
+    const clear = this.babylonScene.clearColor;
+    this.planetColor = planetColor ?? new Color3(clear.r, clear.g, clear.b);
     this.setupKeyboardControls();
     this.createReferenceObjects();
   }
@@ -116,7 +121,7 @@ export class DebugVisualization {
   }
 
   private createReferenceObjects(): void {
-    const earthRadius = Ellipsoid.WGS84.maximumRadius; // Earth ellipsoid radius
+    const earthRadius = this.ellipsoid.maximumRadius; // Planet ellipsoid radius
 
     // Earth sphere (hidden wireframe)
     const marsSphere = MeshBuilder.CreateSphere(
@@ -127,8 +132,8 @@ export class DebugVisualization {
     marsSphere.position = Vector3.Zero();
     marsSphere.setEnabled(false);
     const marsMaterial = new StandardMaterial('earthMaterial', this.babylonScene);
-    marsMaterial.diffuseColor = new Color3(0.3, 0.5, 0.9); // Earth-ish color
-    marsMaterial.emissiveColor = new Color3(0.1, 0.2, 0.4);
+    marsMaterial.diffuseColor = this.planetColor;
+    marsMaterial.emissiveColor = this.planetColor.scale(0.5);
     marsMaterial.wireframe = true;
     marsSphere.material = marsMaterial;
 
@@ -142,8 +147,8 @@ export class DebugVisualization {
     skyBarrier.position = Vector3.Zero();
     skyBarrier.setEnabled(false);
     const skyMaterial = new StandardMaterial('skyMaterial', this.babylonScene);
-    skyMaterial.diffuseColor = new Color3(0.8, 0.2, 0.2);
-    skyMaterial.emissiveColor = new Color3(0.1, 0.05, 0.05);
+    skyMaterial.diffuseColor = this.planetColor.scale(0.4);
+    skyMaterial.emissiveColor = this.planetColor.scale(0.2);
     skyMaterial.wireframe = true;
     skyMaterial.alpha = 0.3;
     skyBarrier.material = skyMaterial;

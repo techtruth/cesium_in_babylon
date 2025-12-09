@@ -9,6 +9,7 @@ type BaseCam = Camera;
 
 class KeyboardYawPitchRollInput implements ICameraInput<BaseCam> {
   camera!: BaseCam;
+  private refRadius: number;
   private keysLeft = [74]; // J
   private keysRight = [76]; // L
   private keysUp = [73]; // I
@@ -16,11 +17,15 @@ class KeyboardYawPitchRollInput implements ICameraInput<BaseCam> {
   private keysRollLeft = [79]; // O
   private keysRollRight = [85]; // U
   private _keys = new Set<number>();
-  public rotationStep = 0.005; // radians per frame while held (~0.29°)
+  public rotationStep = 0.005; // base radians per frame while held (~0.29°) at refRadius
   private _tmpQuat: Quaternion = Quaternion.Identity();
   private _tmpForward: Vector3 = new Vector3();
   private _tmpRight: Vector3 = new Vector3();
   private _tmpUp: Vector3 = new Vector3();
+
+  constructor(refRadius = 1) {
+    this.refRadius = refRadius > 0 ? refRadius : 1;
+  }
 
     getClassName(): string {
       return 'KeyboardYawPitchRollInput';
@@ -124,7 +129,9 @@ class KeyboardYawPitchRollInput implements ICameraInput<BaseCam> {
     }
     if (!yawLeft && !yawRight && !pitchUp && !pitchDown && !rollLeft && !rollRight) return;
 
-    const step = this.rotationStep;
+      const dist = this.camera.position.length();
+      const stepScale = this.refRadius / Math.max(dist, 1);
+      const step = this.rotationStep * stepScale;
     if (!this.camera.rotationQuaternion) this.camera.rotationQuaternion = Quaternion.Identity();
 
     let orientation = this.camera.rotationQuaternion;
@@ -295,8 +302,9 @@ export function addDualHandSixDofKeyboardInputs(
   speedScaler?: (camera: Camera, baseSpeed: number) => number,
   refRadius?: number
 ): void {
-  camera.inputs.add(new KeyboardMoveInput(speedScaler, refRadius));
-  camera.inputs.add(new KeyboardYawPitchRollInput());
+  const r = refRadius ?? 1;
+  camera.inputs.add(new KeyboardMoveInput(speedScaler, r));
+  camera.inputs.add(new KeyboardYawPitchRollInput(r));
 }
 
 export { KeyboardMoveInput, KeyboardYawPitchRollInput };
