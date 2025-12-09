@@ -168,19 +168,35 @@ window.addEventListener('DOMContentLoaded', async () => {
       let orientation = this.camera.rotationQuaternion;
 
       const refreshBasis = () => {
-        // Derive an orthonormal basis from the current orientation
+        // Derive an orthonormal basis from the current orientation using all three canonical axes
         this.rotateVec(orientation, Vector3.Forward(), this._tmpForward);
         this.rotateVec(orientation, Vector3.Right(), this._tmpRight);
+        this.rotateVec(orientation, Vector3.Up(), this._tmpUp);
+
         let f = this._tmpForward.lengthSquared() > 1e-6 ? this._tmpForward.normalize() : Vector3.Forward();
         let r = this._tmpRight.lengthSquared() > 1e-6 ? this._tmpRight.normalize() : Vector3.Right();
-        Vector3.CrossToRef(r, f, this._tmpUp); // up = right x forward
-        let u = this._tmpUp.lengthSquared() > 1e-6 ? this._tmpUp.normalize() : this.rotateVec(orientation, Vector3.Up(), this._tmpUp).normalize();
+        let u = this._tmpUp.lengthSquared() > 1e-6 ? this._tmpUp.normalize() : Vector3.Up();
+
+        // Gram-Schmidt to keep axes orthonormal while preserving handedness
+        const dotFR = Vector3.Dot(f, r);
+        if (Math.abs(dotFR) > 1e-6) {
+          r = r.subtract(f.scale(dotFR)).normalize();
+        }
+        const dotFU = Vector3.Dot(f, u);
+        if (Math.abs(dotFU) > 1e-6) {
+          u = u.subtract(f.scale(dotFU)).normalize();
+        }
+        const dotRU = Vector3.Dot(r, u);
+        if (Math.abs(dotRU) > 1e-6) {
+          u = u.subtract(r.scale(dotRU)).normalize();
+        }
+
         return { forward: f, right: r, up: u };
       };
 
       let { forward, right, up: localUp } = refreshBasis();
 
-      const yawDelta = (yawRight ? step : 0) + (yawLeft ? -step : 0);
+      const yawDelta = (yawRight ? -step : 0) + (yawLeft ? step : 0);
       const pitchDelta = (pitchDown ? -step : 0) + (pitchUp ? step : 0);
       const rollDelta = (rollRight ? -step : 0) + (rollLeft ? step : 0);
 
@@ -220,6 +236,8 @@ window.addEventListener('DOMContentLoaded', async () => {
     private _lastTime = performance.now();
     private _tmpForward: Vector3 = new Vector3();
     private _tmpRight: Vector3 = new Vector3();
+    private _tmpUp: Vector3 = new Vector3();
+    private _tmpMat: Matrix = Matrix.Identity();
     private _move: Vector3 = new Vector3();
 
     private rotateVec(q: Quaternion, v: Vector3, out: Vector3): Vector3 {
@@ -285,16 +303,17 @@ window.addEventListener('DOMContentLoaded', async () => {
       this._lastTime = now;
 
       const orient = this.camera.rotationQuaternion ?? Quaternion.Identity();
-      // Use camera-local basis: forward/right/up directly from quaternion
-      this.rotateVec(orient, Vector3.Forward(), this._tmpForward);
-      let forward = this._tmpForward.lengthSquared() > 1e-6 ? this._tmpForward.normalize() : Vector3.Forward();
-      this.rotateVec(orient, Vector3.Right(), this._tmpRight);
-      let right = this._tmpRight.lengthSquared() > 1e-6 ? this._tmpRight.normalize() : Vector3.Right();
-      this.rotateVec(orient, Vector3.Up(), this._tmpRight);
-      let up = this._tmpRight.lengthSquared() > 1e-6 ? this._tmpRight.normalize() : Vector3.Up();
+      // Camera-local basis directly from quaternion matrix (no conditional gating)
+      Matrix.FromQuaternionToRef(orient, this._tmpMat);
+      Vector3.TransformNormalToRef(Vector3.Forward(), this._tmpMat, this._tmpForward);
+      Vector3.TransformNormalToRef(Vector3.Right(), this._tmpMat, this._tmpRight);
+      Vector3.TransformNormalToRef(Vector3.Up(), this._tmpMat, this._tmpUp);
+      const forward = this._tmpForward.normalize();
+      const right = this._tmpRight.normalize();
+      const up = this._tmpUp.normalize();
 
       this._move.set(0, 0, 0);
-      const fDir = forward.scale(-1);
+      const fDir = forward.scale(-1); // move "forward" along view direction
       this._keys.forEach((code) => {
         if (this.keysForward.includes(code)) this._move.addInPlace(fDir);
         if (this.keysBack.includes(code)) this._move.addInPlace(fDir.scale(-1));

@@ -1,4 +1,4 @@
-import { Scene, MeshBuilder, StandardMaterial, Color3, Vector3, Mesh } from '@babylonjs/core';
+import { Scene, MeshBuilder, StandardMaterial, Color3, Vector3, Mesh, DynamicTexture } from '@babylonjs/core';
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
 import { Ellipsoid } from 'cesium';
 import { cesiumToBabylonVec3 } from './coordUtils';
@@ -19,6 +19,8 @@ export class DebugVisualization {
   private frustumPlanes: any[] = [];
   private cameraOrientationLines: any[] = [];
   private lastFrustumUpdate = 0;
+  private axisMarkers: Mesh[] = [];
+  private axisLabels: Mesh[] = [];
 
   constructor(babylonScene: Scene, cesiumTileset: any) {
     this.babylonScene = babylonScene;
@@ -79,10 +81,12 @@ export class DebugVisualization {
     console.log(this.frustumVisible ? '🔲 Frustum on' : '🔲 Frustum off');
 
     if (this.frustumVisible) {
+      this.ensureAxisMarkers();
       this.createFrustumWireframe();
     } else {
       this.clearFrustumWireframes();
       this.clearFrustumPlanes();
+      this.clearAxisMarkers();
     }
   }
 
@@ -107,6 +111,7 @@ export class DebugVisualization {
 
     if (!this.cameraOrientationVisible) {
       this.clearCameraOrientationLines();
+      this.clearAxisMarkers();
     }
   }
 
@@ -170,11 +175,94 @@ export class DebugVisualization {
     southPole.material = southMaterial;
   }
 
+  private ensureAxisMarkers(): void {
+    if (this.axisMarkers.length) return;
+    const specs = [
+      { name: 'axis_forward', color: new Color3(0.2, 1, 0.2), label: '+F' }, // forward
+      { name: 'axis_back', color: new Color3(0.2, 1, 0.2), label: '-F' },    // back
+      { name: 'axis_right', color: new Color3(0.2, 0.4, 1), label: '+R' },   // right
+      { name: 'axis_left', color: new Color3(0.2, 0.4, 1), label: '-R' },    // left
+      { name: 'axis_up', color: new Color3(1, 0.2, 0.2), label: '+U' },      // up
+      { name: 'axis_down', color: new Color3(1, 0.2, 0.2), label: '-U' },    // down
+    ];
+
+    specs.forEach((spec) => {
+      const sphere = MeshBuilder.CreateSphere(spec.name, { diameter: 50 }, this.babylonScene);
+      const mat = new StandardMaterial(`${spec.name}_mat`, this.babylonScene);
+      mat.emissiveColor = spec.color;
+      mat.diffuseColor = spec.color;
+      mat.specularColor = new Color3(0, 0, 0);
+      sphere.material = mat;
+      sphere.isPickable = false;
+      sphere.setEnabled(true);
+      this.axisMarkers.push(sphere);
+
+      // Billboard label
+      const plane = MeshBuilder.CreatePlane(`${spec.name}_label`, { size: 60 }, this.babylonScene);
+      plane.parent = sphere;
+      plane.billboardMode = Mesh.BILLBOARDMODE_ALL;
+      plane.position = new Vector3(0, 60, 0);
+      const tex = new DynamicTexture(`${spec.name}_dt`, { width: 256, height: 256 }, this.babylonScene, true);
+      tex.hasAlpha = true;
+      tex.drawText(spec.label, 80, 170, 'bold 120px Arial', '#ffffff', 'transparent', true);
+      const labelMat = new StandardMaterial(`${spec.name}_label_mat`, this.babylonScene);
+      labelMat.diffuseTexture = tex;
+      labelMat.emissiveTexture = tex;
+      labelMat.specularColor = new Color3(0, 0, 0);
+      labelMat.backFaceCulling = false;
+      labelMat.disableLighting = true;
+      plane.material = labelMat;
+      plane.isPickable = false;
+      plane.setEnabled(true);
+      this.axisLabels.push(plane);
+    });
+  }
+
+  private updateAxisMarkers(cesiumCamera: any): void {
+    if (!this.axisMarkers.length) return;
+    if (!cesiumCamera) return;
+
+    const pos = cesiumToBabylonVec3(cesiumCamera.position);
+    const forwardRaw = cesiumToBabylonVec3(cesiumCamera.direction);
+    const upRaw = cesiumToBabylonVec3(cesiumCamera.up);
+    const rightRaw = cesiumToBabylonVec3(cesiumCamera.right);
+
+    const forward = forwardRaw.lengthSquared() > 1e-6 ? forwardRaw.normalize() : new Vector3(0, 0, 1);
+    const up = upRaw.lengthSquared() > 1e-6 ? upRaw.normalize() : new Vector3(0, 1, 0);
+    const right = rightRaw.lengthSquared() > 1e-6 ? rightRaw.normalize() : new Vector3(1, 0, 0);
+
+    const offset = 300;
+    this.axisMarkers[0].position = pos.add(forward.scale(offset)); // forward
+    this.axisMarkers[1].position = pos.add(forward.scale(-offset)); // back
+    this.axisMarkers[2].position = pos.add(right.scale(offset)); // right
+    this.axisMarkers[3].position = pos.add(right.scale(-offset)); // left
+    this.axisMarkers[4].position = pos.add(up.scale(offset)); // up
+    this.axisMarkers[5].position = pos.add(up.scale(-offset)); // down
+  }
+
+  private clearAxisMarkers(): void {
+    this.axisLabels.forEach((p) => {
+      (p.material as any)?.diffuseTexture?.dispose?.();
+      p.material?.dispose();
+      p.dispose();
+    });
+    this.axisLabels = [];
+    this.axisMarkers.forEach((s) => {
+      s.material?.dispose();
+      s.dispose();
+    });
+    this.axisMarkers = [];
+  }
+
   updateVisualizations(camera: any, frameNumber: number): void {
     if (this.frustumVisible) {
       this.updateFrustumVisualization(camera, frameNumber);
+      this.ensureAxisMarkers();
+      this.updateAxisMarkers(camera);
     }
     if (this.cameraOrientationVisible) {
+      this.ensureAxisMarkers();
+      this.updateAxisMarkers(camera);
       this.updateCameraOrientationVisualization(camera);
     }
   }
@@ -461,6 +549,7 @@ export class DebugVisualization {
     this.clearBoundingVolumeWireframes();
     this.clearFrustumWireframes();
     this.clearCameraOrientationLines();
+    this.clearAxisMarkers();
     if (this.frustumVisualization) {
       this.frustumVisualization.dispose();
       this.frustumVisualization = null;
