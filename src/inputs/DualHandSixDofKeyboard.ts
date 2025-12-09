@@ -160,6 +160,8 @@ class KeyboardYawPitchRollInput implements ICameraInput<BaseCam> {
 
 class KeyboardMoveInput implements ICameraInput<BaseCam> {
   camera!: BaseCam;
+  private refRadius: number;
+  private speedScaler?: (camera: Camera, baseSpeed: number) => number;
   private keysForward = [87]; // W
   private keysBack = [83]; // S
   private keysLeft = [65]; // A
@@ -173,6 +175,12 @@ class KeyboardMoveInput implements ICameraInput<BaseCam> {
   private _tmpUp: Vector3 = new Vector3();
   private _tmpMat: Matrix = Matrix.Identity();
   private _move: Vector3 = new Vector3();
+  private _lastLogTime = 0;
+
+  constructor(speedScaler?: (camera: Camera, baseSpeed: number) => number, refRadius = 1) {
+    this.speedScaler = speedScaler;
+    this.refRadius = refRadius > 0 ? refRadius : 1;
+  }
 
   private rotateVec(q: Quaternion, v: Vector3, out: Vector3): Vector3 {
     const qx = q.x, qy = q.y, qz = q.z, qw = q.w;
@@ -259,16 +267,35 @@ class KeyboardMoveInput implements ICameraInput<BaseCam> {
 
     if (this._move.lengthSquared() === 0) return;
     this._move.normalize();
-    const speed = this.camera.speed ?? 50;
-    this.camera.position.addInPlace(this._move.scale(speed * dt));
+    const baseSpeed = this.camera.speed ?? 50;
+    const scaledSpeed = this.speedScaler ? this.speedScaler(this.camera, baseSpeed) : baseSpeed;
+    // Debug: log current speed scaling when moving (throttled)
+      if (this._move.lengthSquared() > 0 && this.speedScaler) {
+        const nowMs = performance.now();
+        if (nowMs - this._lastLogTime > 500) {
+          this._lastLogTime = nowMs;
+          const scale = baseSpeed !== 0 ? scaledSpeed / baseSpeed : 0;
+          const dist = this.camera.position.length();
+          const altKm = Math.max(dist - this.refRadius, 0) / 1000;
+          console.log(
+            `[KeyboardMoveInput] altKm=${altKm.toFixed(2)} baseSpeed=${baseSpeed.toFixed(2)} scaled=${scaledSpeed.toFixed(2)} scale=${scale.toFixed(2)}`
+          );
+        }
+      }
+
+    this.camera.position.addInPlace(this._move.scale(scaledSpeed * dt));
     // Keep up vector aligned with orientation
     this.camera.upVector = up;
   }
 }
 
 // Helper to attach both inputs (movement + yaw/pitch/roll).
-export function addDualHandSixDofKeyboardInputs(camera: Camera): void {
-  camera.inputs.add(new KeyboardMoveInput());
+export function addDualHandSixDofKeyboardInputs(
+  camera: Camera,
+  speedScaler?: (camera: Camera, baseSpeed: number) => number,
+  refRadius?: number
+): void {
+  camera.inputs.add(new KeyboardMoveInput(speedScaler, refRadius));
   camera.inputs.add(new KeyboardYawPitchRollInput());
 }
 

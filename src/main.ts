@@ -103,7 +103,20 @@ window.addEventListener('DOMContentLoaded', async () => {
     // Setup FreeCamera with only custom inputs (no pointer grab)
     const camera = new FreeCamera('camera', new Vector3(0, 0, 0), scene) as BaseCam;
     camera.inputs.clear();
-    addDualHandSixDofKeyboardInputs(camera);
+    // Distance-aware speed scaling so angular travel time stays similar at any altitude
+    const baseDistanceForSpeed = planetConfig.ellipsoid.maximumRadius; // reference radius for "surface" speed
+    addDualHandSixDofKeyboardInputs(camera, (cam, baseSpeed) => {
+      const dist = cam.position.length(); // distance from center
+      const alt = Math.max(dist - baseDistanceForSpeed, 0); // altitude above surface
+      // Aggressive linear growth using golden ratio multiplier per km
+      const altKm = alt / 1000;
+      const phi = (1 + Math.sqrt(5)) / 2;
+      // Boost near-surface with linear term, still ramps quadratically at altitude
+      const linear = 5 * altKm;
+      const quad = 5 * altKm * altKm;
+      const scale = Math.min(1 + linear + quad, 5000);
+      return baseSpeed * scale;
+    }, baseDistanceForSpeed);
     camera.attachControl(canvas, true);
     // Allow mouse rotation to feel more like an FPS look camera
     camera.inertia = 0.7; // reduce damping for snappier response
@@ -135,16 +148,20 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   // Keyboard event handler for camera speed and tile visibility controls
   function setupKeyboardControls(camera: BaseCam, scene: Scene) {
-    const cameraSpeedLevels = [0, 5, 50, 200, 1000, 5000, 25000, 100000, 500000, 2000000];
-    let currentSpeedLevel = 5;
-    camera.speed = cameraSpeedLevels[currentSpeedLevel];
+    // Exponential speed curve (doubling per level) to avoid hard-coded speed steps
+    const baseSpeed = 2.7778; // ~10 km/h in m/s
+    let speedPower = 0; // 0 => baseSpeed
+    const applySpeed = () => {
+      camera.speed = baseSpeed * Math.pow(2, speedPower);
+    };
+    applySpeed();
 
     window.addEventListener('keydown', (event) => {
       const key = event.key;
       if (key >= '1' && key <= '9') {
-        const speedLevel = parseInt(key);
-        currentSpeedLevel = speedLevel;
-        camera.speed = cameraSpeedLevels[currentSpeedLevel];
+        // map 1..9 to powers -4..4 (centered on 5 = base speed)
+        speedPower = parseInt(key) - 5;
+        applySpeed();
       } else if (key === '0') {
         // Toggle all tile mesh visibility
       const tileMeshes = scene.meshes.filter(
