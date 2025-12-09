@@ -62,8 +62,6 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   type BaseCam = FreeCamera;
 
-  type BaseCam = FreeCamera;
-
   const canvas = document.getElementById('renderCanvas') as HTMLCanvasElement;
   if (!canvas) {
     console.error('Canvas element not found!');
@@ -110,7 +108,6 @@ window.addEventListener('DOMContentLoaded', async () => {
       const alt = Math.max(dist - baseDistanceForSpeed, 0); // altitude above surface
       // Aggressive linear growth using golden ratio multiplier per km
       const altKm = alt / 1000;
-      const phi = (1 + Math.sqrt(5)) / 2;
       // Simpler linear growth with altitude (km)
       const scale = Math.min(1 + 10 * altKm, 10000);
       return baseSpeed * scale;

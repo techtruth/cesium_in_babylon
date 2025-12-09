@@ -1,7 +1,7 @@
-import { Vector3, Quaternion, Matrix, Camera } from '@babylonjs/core';
+import { Vector3, Quaternion, FreeCamera, Camera } from '@babylonjs/core';
 import type { ICameraInput } from '@babylonjs/core/Cameras/cameraInputsManager';
 
-type BaseCam = Camera;
+type BaseCam = FreeCamera;
 const PHI = (1 + Math.sqrt(5)) / 2;
 
 // Two-handed 6DoF keyboard controls:
@@ -116,10 +116,6 @@ class KeyboardYawPitchRollInput implements ICameraInput<BaseCam> {
 
   checkInputs(): void {
     if (!this.camera) return;
-    if (this.movementPaused) {
-      this._lastTime = performance.now();
-      return;
-    }
     let yawLeft = false;
     let yawRight = false;
     let pitchUp = false;
@@ -177,7 +173,6 @@ class KeyboardYawPitchRollInput implements ICameraInput<BaseCam> {
 
 class KeyboardMoveInput implements ICameraInput<BaseCam> {
   camera!: BaseCam;
-  private refRadius: number;
   private speedScaler?: (camera: Camera, baseSpeed: number) => number;
   private keysForward: number[] = []; // forward drift is always on
   private keysBack: number[] = [];
@@ -186,7 +181,6 @@ class KeyboardMoveInput implements ICameraInput<BaseCam> {
   private keysUp = [87]; // W (vertical up)
   private keysDown = [83]; // S (vertical down)
   private keysBoostForward = [81]; // Q boosts forward speed
-  private keysBoostTurn = [69]; // E boosts rotation (handled in rotation input)
   private keysBrake = [32]; // Space bar stops forward drift
   private _keys = new Set<number>();
   private _lastTime = performance.now();
@@ -202,9 +196,8 @@ class KeyboardMoveInput implements ICameraInput<BaseCam> {
   private _combinedMove: Vector3 = new Vector3();
   private movementPaused = false;
 
-  constructor(speedScaler?: (camera: Camera, baseSpeed: number) => number, refRadius = 1) {
+  constructor(speedScaler?: (camera: Camera, baseSpeed: number) => number) {
     this.speedScaler = speedScaler;
-    this.refRadius = refRadius > 0 ? refRadius : 1;
   }
 
   private rotateVec(q: Quaternion, v: Vector3, out: Vector3): Vector3 {
@@ -312,12 +305,12 @@ class KeyboardMoveInput implements ICameraInput<BaseCam> {
 
 // Helper to attach both inputs (movement + yaw/pitch/roll).
 export function addDualHandSixDofKeyboardInputs(
-  camera: Camera,
+  camera: FreeCamera,
   speedScaler?: (camera: Camera, baseSpeed: number) => number,
   refRadius?: number
 ): void {
   const r = refRadius ?? 1;
-  camera.inputs.add(new KeyboardMoveInput(speedScaler, r));
+  camera.inputs.add(new KeyboardMoveInput(speedScaler));
   camera.inputs.add(new KeyboardYawPitchRollInput(r));
 }
 

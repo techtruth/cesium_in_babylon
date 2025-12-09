@@ -41,7 +41,6 @@ export class SimpleIntegration {
   private lastMovementTimestamp: number = Date.now();
   private debugVisualization!: DebugVisualization;
   private addedCredits: Set<string> = new Set();
-  private debugLogInterval: number = 180; // frames between debug logs to avoid spam
 
   private addCreditToHTML(credit: any): void {
     const creditText = credit.text || credit.html || credit.toString();
@@ -488,19 +487,6 @@ export class SimpleIntegration {
       }
     }
   }
-
-  /**
-   * Inspect RequestScheduler to see if we are throttling tile requests.
-   */
-  private getRequestSchedulerStats(): string {
-    const rs = (CesiumInternal as any).RequestScheduler;
-    if (!rs) return '';
-    const active = rs.numberOfActiveRequests ?? 0;
-    const pending = Array.isArray(rs.requests) ? rs.requests.length : 0;
-    const deferred = Array.isArray(rs.deferredRequests) ? rs.deferredRequests.length : 0;
-    return `reqs active=${active} pending=${pending} deferred=${deferred}`;
-  }
-
 
   /**
    * Apply transforms to selected tiles' meshes during render loop
