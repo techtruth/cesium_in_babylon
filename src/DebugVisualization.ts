@@ -178,12 +178,12 @@ export class DebugVisualization {
   private ensureAxisMarkers(): void {
     if (this.axisMarkers.length) return;
     const specs = [
-      { name: 'axis_forward', color: new Color3(0.2, 1, 0.2), label: '+F' }, // forward
-      { name: 'axis_back', color: new Color3(0.2, 1, 0.2), label: '-F' },    // back
-      { name: 'axis_right', color: new Color3(0.2, 0.4, 1), label: '+R' },   // right
-      { name: 'axis_left', color: new Color3(0.2, 0.4, 1), label: '-R' },    // left
-      { name: 'axis_up', color: new Color3(1, 0.2, 0.2), label: '+U' },      // up
-      { name: 'axis_down', color: new Color3(1, 0.2, 0.2), label: '-U' },    // down
+      { name: 'axis_forward', color: new Color3(0.2, 1, 0.2), label: '+F' },  // forward (+F)
+      { name: 'axis_back', color: new Color3(0.2, 1, 0.2), label: '-B' },     // back (-B)
+      { name: 'axis_right', color: new Color3(0.2, 0.4, 1), label: '+R' },    // right (+R)
+      { name: 'axis_left', color: new Color3(0.2, 0.4, 1), label: '-L' },     // left (-L)
+      { name: 'axis_up', color: new Color3(1, 0.2, 0.2), label: '+U' },       // up (+U)
+      { name: 'axis_down', color: new Color3(1, 0.2, 0.2), label: '-D' },     // down (-D)
     ];
 
     specs.forEach((spec) => {
