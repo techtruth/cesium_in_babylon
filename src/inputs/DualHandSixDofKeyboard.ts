@@ -2,6 +2,7 @@ import { Vector3, Quaternion, Matrix, Camera } from '@babylonjs/core';
 import type { ICameraInput } from '@babylonjs/core/Cameras/cameraInputsManager';
 
 type BaseCam = Camera;
+const PHI = (1 + Math.sqrt(5)) / 2;
 
 // Two-handed 6DoF keyboard controls:
 // - Movement (WASDQE) and rotation (IJKL + U/O roll)
@@ -14,8 +15,8 @@ class KeyboardYawPitchRollInput implements ICameraInput<BaseCam> {
   private keysRight = [76]; // L
   private keysUp = [73]; // I
   private keysDown = [75]; // K
-  private keysRollLeft = [79]; // O
-  private keysRollRight = [85]; // U
+  private keysRollLeft = [85]; // U
+  private keysRollRight = [79]; // O
   private keysTurnBoost = [69]; // E boosts rotation speed
   private _keys = new Set<number>();
   public rotationStep = 0.005; // base radians per frame while held (~0.29°) at refRadius
@@ -139,8 +140,7 @@ class KeyboardYawPitchRollInput implements ICameraInput<BaseCam> {
 
     const dist = this.camera.position.length();
     const stepScale = this.refRadius / Math.max(dist, 1);
-    const phi = (1 + Math.sqrt(5)) / 2;
-    const boost = turnBoost ? phi : 1; // E multiplies rotation speed by phi
+    const boost = turnBoost ? PHI : 1; // E multiplies rotation speed by phi
     const step = this.rotationStep * stepScale * boost;
     if (!this.camera.rotationQuaternion) this.camera.rotationQuaternion = Quaternion.Identity();
 
@@ -193,9 +193,13 @@ class KeyboardMoveInput implements ICameraInput<BaseCam> {
   private _tmpForward: Vector3 = new Vector3();
   private _tmpRight: Vector3 = new Vector3();
   private _tmpUp: Vector3 = new Vector3();
-  private _tmpMat: Matrix = Matrix.Identity();
-  private _move: Vector3 = new Vector3();
+  private _tmpNegForward: Vector3 = new Vector3();
+  private _tmpNegRight: Vector3 = new Vector3();
+  private _tmpNegUp: Vector3 = new Vector3();
   private _keyMove: Vector3 = new Vector3();
+  private _tmpForwardDrift: Vector3 = new Vector3();
+  private _tmpScaledKey: Vector3 = new Vector3();
+  private _combinedMove: Vector3 = new Vector3();
   private movementPaused = false;
 
   constructor(speedScaler?: (camera: Camera, baseSpeed: number) => number, refRadius = 1) {
@@ -268,35 +272,33 @@ class KeyboardMoveInput implements ICameraInput<BaseCam> {
     this._lastTime = now;
 
     const orient = this.camera.rotationQuaternion ?? Quaternion.Identity();
-    // Camera-local basis directly from quaternion matrix
-    Matrix.FromQuaternionToRef(orient, this._tmpMat);
-    Vector3.TransformNormalToRef(Vector3.Forward(), this._tmpMat, this._tmpForward);
-    Vector3.TransformNormalToRef(Vector3.Right(), this._tmpMat, this._tmpRight);
-    Vector3.TransformNormalToRef(Vector3.Up(), this._tmpMat, this._tmpUp);
-    const forward = this._tmpForward.normalize();
-    const right = this._tmpRight.normalize();
-    const up = this._tmpUp.normalize();
+    // Camera-local basis directly from quaternion (avoids matrix allocation)
+    const forward = this.rotateVec(orient, Vector3.Forward(), this._tmpForward).normalize();
+    const right = this.rotateVec(orient, Vector3.Right(), this._tmpRight).normalize();
+    const up = this.rotateVec(orient, Vector3.Up(), this._tmpUp).normalize();
 
-    // Default forward drift along view direction
-    const forwardDrift = forward.scale(-1);
+    // Default forward drift along view direction (reuse temps)
+    const forwardDrift = this._tmpForwardDrift.copyFrom(forward).scaleInPlace(-1);
 
     // Raw keyed movement (before boost)
     this._keyMove.set(0, 0, 0);
-    const fDir = forward.scale(-1); // move along view direction
     this._keys.forEach((code) => {
-      if (this.keysForward.includes(code)) this._keyMove.addInPlace(fDir);
-      if (this.keysBack.includes(code)) this._keyMove.addInPlace(fDir.scale(-1));
-      if (this.keysLeft.includes(code)) this._keyMove.addInPlace(right.scale(-1));
+      if (this.keysForward.includes(code)) this._keyMove.addInPlace(forwardDrift); // forward
+      if (this.keysBack.includes(code)) this._keyMove.addInPlace(this._tmpNegForward.copyFrom(forward).scaleInPlace(-1)); // back
+      if (this.keysLeft.includes(code)) this._keyMove.addInPlace(this._tmpNegRight.copyFrom(right).scaleInPlace(-1));
       if (this.keysRight.includes(code)) this._keyMove.addInPlace(right);
       if (this.keysUp.includes(code)) this._keyMove.addInPlace(up);
-      if (this.keysDown.includes(code)) this._keyMove.addInPlace(up.scale(-1));
+      if (this.keysDown.includes(code)) this._keyMove.addInPlace(this._tmpNegUp.copyFrom(up).scaleInPlace(-1));
     });
 
     // Combine drift + boosted keyed movement
     const baseSpeed = this.camera.speed ?? 50;
-    const phi = (1 + Math.sqrt(5)) / 2;
-    const boost = this.keysBoostForward.some((k) => this._keys.has(k)) ? phi : 1; // Q multiplies keyed movement by phi
-    const combined = forwardDrift.add(this._keyMove.scale(boost));
+    const boost = this.keysBoostForward.some((k) => this._keys.has(k)) ? PHI : 1; // Q multiplies keyed movement by phi
+    const combined = this._combinedMove.copyFrom(forwardDrift);
+    if (this._keyMove.lengthSquared() > 0) {
+      this._keyMove.scaleToRef(boost, this._tmpScaledKey);
+      combined.addInPlace(this._tmpScaledKey);
+    }
 
     const len2 = combined.lengthSquared();
     if (len2 === 0) return;
