@@ -135,15 +135,6 @@ export class SimpleIntegration {
     // Use render buffer size for frustum aspect to match Cesium expectations
     const renderWidth = this.engine.getRenderWidth();
     const renderHeight = this.engine.getRenderHeight();
-    if (this.frameCount % this.debugLogInterval === 0) {
-      const canvas = this.engine.getRenderingCanvas();
-      const clientW = canvas?.clientWidth ?? 0;
-      const clientH = canvas?.clientHeight ?? 0;
-      const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
-      console.log(
-        `[CesiumCam] renderSize=${renderWidth}x${renderHeight} clientSize=${clientW}x${clientH} dpr=${dpr} maxZ=${this.camera.maxZ}`
-      );
-    }
 
     // Create frustum directly from Babylon camera values
     const ellipsoid = this.ellipsoid ?? Ellipsoid.WGS84;
@@ -393,28 +384,8 @@ export class SimpleIntegration {
         }
       });
     
-      // Debug selection counts to understand missing tiles
-      if (this.frameCount % this.debugLogInterval === 0) {
-        const stats = (this.cesiumTileset as any)._statistics;
-        const visited = stats?.visited;
-        const reqStats = this.getRequestSchedulerStats();
-        const requested = ((this.cesiumTileset as any)._requestedTiles || []).length;
-        const inFlight = ((this.cesiumTileset as any)._requestedTilesInFlight || []).length;
-        const processing = ((this.cesiumTileset as any)._processingQueue || []).length;
-        const emptyTiles = ((this.cesiumTileset as any)._emptyTiles || []).length;
-        const sample = Array.from(selectedSet).map((tile: any) => {
-          const ref = tile.refine ?? tile._refine;
-          const sse = tile._screenSpaceError ?? tile.screenSpaceError;
-          const children = tile.children || [];
-          const readyKids = children.filter((c: any) => c._content?.ready).length;
-          return `d=${tile._depth} ref=${ref} sse=${sse?.toFixed?.(2) ?? sse} kids=${readyKids}/${children.length}`;
-        });
-        console.log(
-          `[Tileset dbg] frame=${frameNumber} selected=${selectedSet.size} ready=${readySelected.size} visited=${visited} requested=${requested} inFlight=${inFlight} processing=${processing} empty=${emptyTiles} ${reqStats} samples=[${sample.join(
-            ' | '
-          )}]`
-        );
-      }
+      // Debug selection counts to understand missing tiles (disabled)
+      // if (this.frameCount % this.debugLogInterval === 0) { ... }
 
       // 3. postPassesUpdate() - cleanup, request scheduling, cache management
       (this.cesiumTileset as any).postPassesUpdate(frameState);

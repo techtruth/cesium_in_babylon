@@ -16,6 +16,7 @@ class KeyboardYawPitchRollInput implements ICameraInput<BaseCam> {
   private keysDown = [75]; // K
   private keysRollLeft = [79]; // O
   private keysRollRight = [85]; // U
+  private keysTurnBoost = [69]; // E boosts rotation speed
   private _keys = new Set<number>();
   public rotationStep = 0.005; // base radians per frame while held (~0.29°) at refRadius
   private _tmpQuat: Quaternion = Quaternion.Identity();
@@ -43,13 +44,14 @@ class KeyboardYawPitchRollInput implements ICameraInput<BaseCam> {
         this.keysRight.includes(code) ||
         this.keysUp.includes(code) ||
         this.keysDown.includes(code) ||
-        this.keysRollLeft.includes(code) ||
-        this.keysRollRight.includes(code)
-      ) {
-        this._keys.add(code);
-        if (!noPreventDefault) evt.preventDefault();
-      }
-    };
+          this.keysRollLeft.includes(code) ||
+          this.keysRollRight.includes(code) ||
+          this.keysTurnBoost.includes(code)
+        ) {
+          this._keys.add(code);
+          if (!noPreventDefault) evt.preventDefault();
+        }
+      };
 
     const onKeyUp = (evt: KeyboardEvent) => {
       const code = evt.keyCode || evt.which;
@@ -113,12 +115,17 @@ class KeyboardYawPitchRollInput implements ICameraInput<BaseCam> {
 
   checkInputs(): void {
     if (!this.camera) return;
+    if (this.movementPaused) {
+      this._lastTime = performance.now();
+      return;
+    }
     let yawLeft = false;
     let yawRight = false;
     let pitchUp = false;
     let pitchDown = false;
     let rollLeft = false;
     let rollRight = false;
+    let turnBoost = false;
     for (const k of this._keys) {
       if (this.keysLeft.includes(k)) yawLeft = true;
       if (this.keysRight.includes(k)) yawRight = true;
@@ -126,12 +133,15 @@ class KeyboardYawPitchRollInput implements ICameraInput<BaseCam> {
       if (this.keysDown.includes(k)) pitchDown = true;
       if (this.keysRollLeft.includes(k)) rollLeft = true;
       if (this.keysRollRight.includes(k)) rollRight = true;
+      if (this.keysTurnBoost.includes(k)) turnBoost = true;
     }
     if (!yawLeft && !yawRight && !pitchUp && !pitchDown && !rollLeft && !rollRight) return;
 
-      const dist = this.camera.position.length();
-      const stepScale = this.refRadius / Math.max(dist, 1);
-      const step = this.rotationStep * stepScale;
+    const dist = this.camera.position.length();
+    const stepScale = this.refRadius / Math.max(dist, 1);
+    const phi = (1 + Math.sqrt(5)) / 2;
+    const boost = turnBoost ? phi : 1; // E multiplies rotation speed by phi
+    const step = this.rotationStep * stepScale * boost;
     if (!this.camera.rotationQuaternion) this.camera.rotationQuaternion = Quaternion.Identity();
 
     let orientation = this.camera.rotationQuaternion;
@@ -169,12 +179,15 @@ class KeyboardMoveInput implements ICameraInput<BaseCam> {
   camera!: BaseCam;
   private refRadius: number;
   private speedScaler?: (camera: Camera, baseSpeed: number) => number;
-  private keysForward = [87]; // W
-  private keysBack = [83]; // S
+  private keysForward: number[] = []; // forward drift is always on
+  private keysBack: number[] = [];
   private keysLeft = [65]; // A
   private keysRight = [68]; // D
-  private keysUp = [81]; // Q
-  private keysDown = [69]; // E
+  private keysUp = [87]; // W (vertical up)
+  private keysDown = [83]; // S (vertical down)
+  private keysBoostForward = [81]; // Q boosts forward speed
+  private keysBoostTurn = [69]; // E boosts rotation (handled in rotation input)
+  private keysBrake = [32]; // Space bar stops forward drift
   private _keys = new Set<number>();
   private _lastTime = performance.now();
   private _tmpForward: Vector3 = new Vector3();
@@ -182,7 +195,8 @@ class KeyboardMoveInput implements ICameraInput<BaseCam> {
   private _tmpUp: Vector3 = new Vector3();
   private _tmpMat: Matrix = Matrix.Identity();
   private _move: Vector3 = new Vector3();
-  private _lastLogTime = 0;
+  private _keyMove: Vector3 = new Vector3();
+  private movementPaused = false;
 
   constructor(speedScaler?: (camera: Camera, baseSpeed: number) => number, refRadius = 1) {
     this.speedScaler = speedScaler;
@@ -211,13 +225,19 @@ class KeyboardMoveInput implements ICameraInput<BaseCam> {
   attachControl(noPreventDefault?: boolean): void {
     const onKeyDown = (evt: KeyboardEvent) => {
       const code = evt.keyCode || evt.which;
+      if (this.keysBrake.includes(code)) {
+        this.movementPaused = !this.movementPaused;
+        if (!noPreventDefault) evt.preventDefault();
+        return;
+      }
       if (
         this.keysForward.includes(code) ||
         this.keysBack.includes(code) ||
         this.keysLeft.includes(code) ||
         this.keysRight.includes(code) ||
         this.keysUp.includes(code) ||
-        this.keysDown.includes(code)
+        this.keysDown.includes(code) ||
+        this.keysBoostForward.includes(code)
       ) {
         this._keys.add(code);
         if (!noPreventDefault) evt.preventDefault();
@@ -243,10 +263,6 @@ class KeyboardMoveInput implements ICameraInput<BaseCam> {
 
   checkInputs(): void {
     if (!this.camera) return;
-    if (this._keys.size === 0) {
-      this._lastTime = performance.now();
-      return;
-    }
     const now = performance.now();
     const dt = Math.min((now - this._lastTime) / 1000, 0.25);
     this._lastTime = now;
@@ -261,36 +277,32 @@ class KeyboardMoveInput implements ICameraInput<BaseCam> {
     const right = this._tmpRight.normalize();
     const up = this._tmpUp.normalize();
 
-    this._move.set(0, 0, 0);
-    const fDir = forward.scale(-1); // move "forward" along view direction
+    // Default forward drift along view direction
+    const forwardDrift = forward.scale(-1);
+
+    // Raw keyed movement (before boost)
+    this._keyMove.set(0, 0, 0);
+    const fDir = forward.scale(-1); // move along view direction
     this._keys.forEach((code) => {
-      if (this.keysForward.includes(code)) this._move.addInPlace(fDir);
-      if (this.keysBack.includes(code)) this._move.addInPlace(fDir.scale(-1));
-      if (this.keysLeft.includes(code)) this._move.addInPlace(right.scale(-1));
-      if (this.keysRight.includes(code)) this._move.addInPlace(right);
-      if (this.keysUp.includes(code)) this._move.addInPlace(up);
-      if (this.keysDown.includes(code)) this._move.addInPlace(up.scale(-1));
+      if (this.keysForward.includes(code)) this._keyMove.addInPlace(fDir);
+      if (this.keysBack.includes(code)) this._keyMove.addInPlace(fDir.scale(-1));
+      if (this.keysLeft.includes(code)) this._keyMove.addInPlace(right.scale(-1));
+      if (this.keysRight.includes(code)) this._keyMove.addInPlace(right);
+      if (this.keysUp.includes(code)) this._keyMove.addInPlace(up);
+      if (this.keysDown.includes(code)) this._keyMove.addInPlace(up.scale(-1));
     });
 
-    if (this._move.lengthSquared() === 0) return;
-    this._move.normalize();
+    // Combine drift + boosted keyed movement
     const baseSpeed = this.camera.speed ?? 50;
-    const scaledSpeed = this.speedScaler ? this.speedScaler(this.camera, baseSpeed) : baseSpeed;
-    // Debug: log current speed scaling when moving (throttled)
-      if (this._move.lengthSquared() > 0 && this.speedScaler) {
-        const nowMs = performance.now();
-        if (nowMs - this._lastLogTime > 500) {
-          this._lastLogTime = nowMs;
-          const scale = baseSpeed !== 0 ? scaledSpeed / baseSpeed : 0;
-          const dist = this.camera.position.length();
-          const altKm = Math.max(dist - this.refRadius, 0) / 1000;
-          console.log(
-            `[KeyboardMoveInput] altKm=${altKm.toFixed(2)} baseSpeed=${baseSpeed.toFixed(2)} scaled=${scaledSpeed.toFixed(2)} scale=${scale.toFixed(2)}`
-          );
-        }
-      }
+    const phi = (1 + Math.sqrt(5)) / 2;
+    const boost = this.keysBoostForward.some((k) => this._keys.has(k)) ? phi : 1; // Q multiplies keyed movement by phi
+    const combined = forwardDrift.add(this._keyMove.scale(boost));
 
-    this.camera.position.addInPlace(this._move.scale(scaledSpeed * dt));
+    const len2 = combined.lengthSquared();
+    if (len2 === 0) return;
+    // Preserve magnitude so boost affects actual speed
+    const scaledSpeed = this.speedScaler ? this.speedScaler(this.camera, baseSpeed) : baseSpeed;
+    this.camera.position.addInPlace(combined.scale(scaledSpeed * dt));
     // Keep up vector aligned with orientation
     this.camera.upVector = up;
   }

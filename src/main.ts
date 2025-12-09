@@ -220,13 +220,6 @@ window.addEventListener('DOMContentLoaded', async () => {
   engine.runRenderLoop(() => {
     // Keep down toward planet center (disabled to avoid fighting mouse rotation)
     // camera.upVector = camera.position.clone().normalize();
-    // Log render buffer size occasionally for debugging viewport coverage
-    const fc = (integration as any).frameCount ?? 0;
-    if (fc % 300 === 0) {
-      console.log(
-        `[Babylon] renderSize=${engine.getRenderWidth()}x${engine.getRenderHeight()} client=${canvas.clientWidth}x${canvas.clientHeight}`
-      );
-    }
     // Update the integration every frame (let Cesium work)
     integration.update();
     scene.render();
