@@ -285,18 +285,13 @@ window.addEventListener('DOMContentLoaded', async () => {
       this._lastTime = now;
 
       const orient = this.camera.rotationQuaternion ?? Quaternion.Identity();
-      // Use radial up to keep translation level while heading follows camera orientation
-      const radialUp = this.camera.position.clone().normalize();
+      // Use camera-local basis: forward/right/up directly from quaternion
       this.rotateVec(orient, Vector3.Forward(), this._tmpForward);
-      let forward = this._tmpForward.lengthSquared() > 1e-6 ? this._tmpForward : Vector3.Forward();
-      // Project forward onto tangent plane to avoid climb/descend when strafing
-      const proj = Vector3.Dot(forward, radialUp);
-      forward = forward.subtract(radialUp.scale(proj));
-      if (forward.lengthSquared() < 1e-6) forward = Vector3.Forward();
-      forward.normalize();
-      Vector3.CrossToRef(radialUp, forward, this._tmpRight);
+      let forward = this._tmpForward.lengthSquared() > 1e-6 ? this._tmpForward.normalize() : Vector3.Forward();
+      this.rotateVec(orient, Vector3.Right(), this._tmpRight);
       let right = this._tmpRight.lengthSquared() > 1e-6 ? this._tmpRight.normalize() : Vector3.Right();
-      const up = radialUp;
+      this.rotateVec(orient, Vector3.Up(), this._tmpRight);
+      let up = this._tmpRight.lengthSquared() > 1e-6 ? this._tmpRight.normalize() : Vector3.Up();
 
       this._move.set(0, 0, 0);
       const fDir = forward.scale(-1);
@@ -313,8 +308,8 @@ window.addEventListener('DOMContentLoaded', async () => {
       this._move.normalize();
       const speed = this.camera.speed ?? 50;
       this.camera.position.addInPlace(this._move.scale(speed * dt));
-      // Keep up vector radial so movement stays level
-      this.camera.upVector = radialUp;
+      // Keep up vector aligned with orientation
+      this.camera.upVector = up;
     }
   }
 
