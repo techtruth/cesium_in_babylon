@@ -511,7 +511,6 @@ export class DebugVisualization {
       vertexData.applyToMesh(quad);
 
       quad.alphaIndex = 0;
-      quad.enableEdgesRendering = false;
       quad.isPickable = false;
       quad.renderingGroupId = undefined as any;
       const mat = new StandardMaterial(`${name}_mat`, scene);

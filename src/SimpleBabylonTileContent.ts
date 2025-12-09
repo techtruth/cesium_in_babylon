@@ -8,7 +8,6 @@ export class SimpleBabylonTileContent {
   private _babylonScene: BabylonScene;
   private _ready: boolean = false;
   private _meshes: any[] = [];
-  private _lastUpdateFrame: number = -1;
 
   constructor(tileset: any, tile: any, resource: any, babylonScene: BabylonScene) {
     this._tileset = tileset;
@@ -141,7 +140,7 @@ export class SimpleBabylonTileContent {
     (this as any)._style = style;
   }
 
-  update(_tileset: any, frameState: any): void {
+  update(_tileset: any, _frameState: any): void {
     if (!this._ready) {
       this._ready = !this._meshes?.length || this._meshes.every((mesh) => mesh.isReady?.());
     }
@@ -150,7 +149,6 @@ export class SimpleBabylonTileContent {
       if (!mesh.isEnabled()) mesh.setEnabled(true);
     });
 
-    this._lastUpdateFrame = frameState.frameNumber;
   }
 
   isDestroyed(): boolean {

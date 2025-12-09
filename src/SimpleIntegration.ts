@@ -249,7 +249,7 @@ export class SimpleIntegration {
         console.warn('Could not attach tileFailed listener:', e);
       }
 
-      this.debugVisualization = new DebugVisualization(this.babylonScene, this.cesiumTileset, this.ellipsoid);
+      this.debugVisualization = new DebugVisualization(this.babylonScene, this.cesiumTileset);
     } catch (error) {
       console.error(`Failed to load ${description}:`, error);
       throw error;
@@ -342,7 +342,6 @@ export class SimpleIntegration {
       // Use planet-specific ellipsoid for projection to align culling with the active body
       mapProjection: new GeographicProjection(this.ellipsoid),
       occluder,
-      pixelRatio,
     };
     
     try {
@@ -488,76 +487,6 @@ export class SimpleIntegration {
     if (this.cesiumTileset && !this.cesiumTileset.isDestroyed()) {
       this.cesiumTileset.destroy();
     }
-  }
-
-  /**
-   * Hide parents once children are ready, to mimic REPLACE refinement.
-   */
-  private cleanupUnselectedTileMeshes(selectedSet: Set<any>): void {
-    if (!this.cesiumTileset || !this.cesiumTileset.root) return;
-
-    const hasSelectedReadyDescendant = (tile: any): boolean => {
-      if (!tile?.children) return false;
-      for (let i = 0; i < tile.children.length; i++) {
-        const child = tile.children[i];
-        const cSelected = selectedSet.has(child);
-        const cContent = child._content;
-        const meshes = cContent?.getBabylonMeshes?.() || [];
-        const cReady = cContent?.ready && meshes.some((m: any) => m.isEnabled && m.isEnabled());
-        if ((cSelected && cReady) || hasSelectedReadyDescendant(child)) {
-          return true;
-        }
-      }
-      return false;
-    };
-
-    const visit = (tile: any) => {
-      const content = tile?._content;
-      const isSimpleContent =
-        content &&
-        content.constructor?.name === 'SimpleBabylonTileContent' &&
-        typeof content.getBabylonMeshes === 'function';
-
-      if (isSimpleContent) {
-        const meshes = content.getBabylonMeshes() || [];
-        const isSelected = selectedSet.has(tile);
-        const descendantReady = hasSelectedReadyDescendant(tile);
-        const shouldHide = !isSelected && descendantReady;
-        meshes.forEach((m: any) => m?.setEnabled && m.setEnabled(!shouldHide));
-      }
-
-      if (tile?.children && tile.children.length > 0) {
-        tile.children.forEach(visit);
-      }
-    };
-
-    visit(this.cesiumTileset.root);
-  }
-
-  private countReadyBabylonTiles(): { readyCount: number; totalCount: number } {
-    let readyCount = 0;
-    let totalCount = 0;
-    if (!this.cesiumTileset || !this.cesiumTileset.root) return { readyCount, totalCount };
-
-    const stack: any[] = [this.cesiumTileset.root];
-    while (stack.length) {
-      const tile = stack.pop();
-      const content = tile?._content;
-      if (
-        content &&
-        content.constructor?.name === 'SimpleBabylonTileContent' &&
-        typeof content.getBabylonMeshes === 'function'
-      ) {
-        totalCount++;
-        const meshes = content.getBabylonMeshes() || [];
-        const isReady = content.ready && meshes.some((m: any) => m?.isEnabled && m.isEnabled());
-        if (isReady) readyCount++;
-      }
-      if (tile?.children && tile.children.length > 0) {
-        for (let i = 0; i < tile.children.length; i++) stack.push(tile.children[i]);
-      }
-    }
-    return { readyCount, totalCount };
   }
 
   /**
