@@ -75,8 +75,14 @@ window.addEventListener('DOMContentLoaded', async () => {
     private keysRight = [76]; // L
     private keysUp = [73]; // I
     private keysDown = [75]; // K
+    private keysRollLeft = [85]; // U
+    private keysRollRight = [79]; // O
     private _keys = new Set<number>();
-    public rotationStep = 0.0025; // radians per frame while held (~0.14°)
+    public rotationStep = 0.005; // radians per frame while held (~0.29°)
+    private _tmpQuat: Quaternion = Quaternion.Identity();
+    private _tmpForward: Vector3 = new Vector3();
+    private _tmpRight: Vector3 = new Vector3();
+    private _tmpUp: Vector3 = new Vector3();
 
     getClassName(): string {
       return 'KeyboardYawPitchInput';
@@ -93,7 +99,9 @@ window.addEventListener('DOMContentLoaded', async () => {
           this.keysLeft.includes(code) ||
           this.keysRight.includes(code) ||
           this.keysUp.includes(code) ||
-          this.keysDown.includes(code)
+          this.keysDown.includes(code) ||
+          this.keysRollLeft.includes(code) ||
+          this.keysRollRight.includes(code)
         ) {
           this._keys.add(code);
           if (!noPreventDefault) evt.preventDefault();
@@ -121,56 +129,82 @@ window.addEventListener('DOMContentLoaded', async () => {
       this._keys.clear();
     }
 
+    private rotateVec(q: Quaternion, v: Vector3, out: Vector3): Vector3 {
+      // Quaternion-vector rotation without building a matrix
+      const qx = q.x, qy = q.y, qz = q.z, qw = q.w;
+      const vx = v.x, vy = v.y, vz = v.z;
+      // t = 2 * cross(q.xyz, v)
+      const tx = 2 * (qy * vz - qz * vy);
+      const ty = 2 * (qz * vx - qx * vz);
+      const tz = 2 * (qx * vy - qy * vx);
+      // v' = v + qw * t + cross(q.xyz, t)
+      out.x = vx + qw * tx + (qy * tz - qz * ty);
+      out.y = vy + qw * ty + (qz * tx - qx * tz);
+      out.z = vz + qw * tz + (qx * ty - qy * tx);
+      return out;
+    }
+
     checkInputs(): void {
       if (!this.camera) return;
+      let yawLeft = false;
+      let yawRight = false;
+      let pitchUp = false;
+      let pitchDown = false;
+      let rollLeft = false;
+      let rollRight = false;
+      for (const k of this._keys) {
+        if (this.keysLeft.includes(k)) yawLeft = true;
+        if (this.keysRight.includes(k)) yawRight = true;
+        if (this.keysUp.includes(k)) pitchUp = true;
+        if (this.keysDown.includes(k)) pitchDown = true;
+        if (this.keysRollLeft.includes(k)) rollLeft = true;
+        if (this.keysRollRight.includes(k)) rollRight = true;
+      }
+      if (!yawLeft && !yawRight && !pitchUp && !pitchDown && !rollLeft && !rollRight) return;
+
       const step = this.rotationStep;
-      const yawLeft = Array.from(this._keys).some((k) => this.keysLeft.includes(k));
-      const yawRight = Array.from(this._keys).some((k) => this.keysRight.includes(k));
-      const pitchUp = Array.from(this._keys).some((k) => this.keysUp.includes(k));
-      const pitchDown = Array.from(this._keys).some((k) => this.keysDown.includes(k));
-      if (!yawLeft && !yawRight && !pitchUp && !pitchDown) return;
+      if (!this.camera.rotationQuaternion) this.camera.rotationQuaternion = Quaternion.Identity();
 
-      if (!this.camera.rotationQuaternion) {
-        this.camera.rotationQuaternion = Quaternion.Identity();
+      let orientation = this.camera.rotationQuaternion;
+
+      const refreshBasis = () => {
+        // Derive an orthonormal basis from the current orientation
+        this.rotateVec(orientation, Vector3.Forward(), this._tmpForward);
+        this.rotateVec(orientation, Vector3.Right(), this._tmpRight);
+        let f = this._tmpForward.lengthSquared() > 1e-6 ? this._tmpForward.normalize() : Vector3.Forward();
+        let r = this._tmpRight.lengthSquared() > 1e-6 ? this._tmpRight.normalize() : Vector3.Right();
+        Vector3.CrossToRef(r, f, this._tmpUp); // up = right x forward
+        let u = this._tmpUp.lengthSquared() > 1e-6 ? this._tmpUp.normalize() : this.rotateVec(orientation, Vector3.Up(), this._tmpUp).normalize();
+        return { forward: f, right: r, up: u };
+      };
+
+      let { forward, right, up: localUp } = refreshBasis();
+
+      const yawDelta = (yawRight ? step : 0) + (yawLeft ? -step : 0);
+      const pitchDelta = (pitchDown ? -step : 0) + (pitchUp ? step : 0);
+      const rollDelta = (rollRight ? -step : 0) + (rollLeft ? step : 0);
+
+      if (yawDelta !== 0) {
+        Quaternion.RotationAxisToRef(localUp, yawDelta, this._tmpQuat);
+        orientation = this._tmpQuat.multiply(orientation);
+        orientation.normalize();
+        ({ forward, right, up: localUp } = refreshBasis());
+      }
+      if (pitchDelta !== 0) {
+        Quaternion.RotationAxisToRef(right, pitchDelta, this._tmpQuat);
+        orientation = this._tmpQuat.multiply(orientation);
+        orientation.normalize();
+        ({ forward, right, up: localUp } = refreshBasis());
+      }
+      if (rollDelta !== 0) {
+        Quaternion.RotationAxisToRef(forward, rollDelta, this._tmpQuat);
+        orientation = this._tmpQuat.multiply(orientation);
+        orientation.normalize();
+        ({ forward, right, up: localUp } = refreshBasis());
       }
 
-      const up = this.camera.position.clone().normalize();
-
-      // Start from current orientation
-      let orientation = this.camera.rotationQuaternion.clone();
-      const orientMat = Matrix.Identity();
-      Matrix.FromQuaternionToRef(orientation, orientMat);
-      let forward = Vector3.TransformNormal(Vector3.Forward(), orientMat).normalize();
-      if (forward.lengthSquared() < 1e-6) forward = Vector3.Forward();
-      let right = Vector3.Cross(up, forward);
-      if (right.lengthSquared() < 1e-6) {
-        right = Vector3.TransformNormal(Vector3.Right(), orientMat).normalize();
-      } else {
-        right.normalize();
-      }
-
-      // Yaw around planetary up
-      if (yawLeft || yawRight) {
-        // Invert yaw so J looks left, L looks right
-        const yawAngle = (yawRight ? -step : 0) + (yawLeft ? step : 0);
-        const yawQ = Quaternion.RotationAxis(up, yawAngle);
-        orientation = yawQ.multiply(orientation);
-        Matrix.FromQuaternionToRef(orientation, orientMat);
-        forward = Vector3.TransformNormal(Vector3.Forward(), orientMat).normalize();
-        right = Vector3.Cross(up, forward).normalize();
-      }
-
-      // Pitch around camera right
-      if (pitchUp || pitchDown) {
-        // Invert pitch so I looks up, K looks down
-        const pitchAngle = (pitchDown ? -step : 0) + (pitchUp ? step : 0);
-        const pitchQ = Quaternion.RotationAxis(right, pitchAngle);
-        orientation = pitchQ.multiply(orientation);
-      }
-
-      orientation.normalize();
       this.camera.rotationQuaternion = orientation;
-      this.camera.upVector = up;
+      this.camera.upVector = localUp;
     }
   }
 
@@ -184,6 +218,21 @@ window.addEventListener('DOMContentLoaded', async () => {
     private keysDown = [69]; // E
     private _keys = new Set<number>();
     private _lastTime = performance.now();
+    private _tmpForward: Vector3 = new Vector3();
+    private _tmpRight: Vector3 = new Vector3();
+    private _move: Vector3 = new Vector3();
+
+    private rotateVec(q: Quaternion, v: Vector3, out: Vector3): Vector3 {
+      const qx = q.x, qy = q.y, qz = q.z, qw = q.w;
+      const vx = v.x, vy = v.y, vz = v.z;
+      const tx = 2 * (qy * vz - qz * vy);
+      const ty = 2 * (qz * vx - qx * vz);
+      const tz = 2 * (qx * vy - qy * vx);
+      out.x = vx + qw * tx + (qy * tz - qz * ty);
+      out.y = vy + qw * ty + (qz * tx - qx * tz);
+      out.z = vz + qw * tz + (qx * ty - qy * tx);
+      return out;
+    }
 
     getClassName(): string {
       return 'KeyboardMoveInput';
@@ -235,41 +284,37 @@ window.addEventListener('DOMContentLoaded', async () => {
       const dt = Math.min((now - this._lastTime) / 1000, 0.25);
       this._lastTime = now;
 
-      const up = this.camera.upVector ? this.camera.upVector.clone().normalize() : Vector3.Up();
-      let forward = this.camera.getDirection(Vector3.Forward()).normalize();
+      const orient = this.camera.rotationQuaternion ?? Quaternion.Identity();
+      // Use radial up to keep translation level while heading follows camera orientation
+      const radialUp = this.camera.position.clone().normalize();
+      this.rotateVec(orient, Vector3.Forward(), this._tmpForward);
+      let forward = this._tmpForward.lengthSquared() > 1e-6 ? this._tmpForward : Vector3.Forward();
+      // Project forward onto tangent plane to avoid climb/descend when strafing
+      const proj = Vector3.Dot(forward, radialUp);
+      forward = forward.subtract(radialUp.scale(proj));
       if (forward.lengthSquared() < 1e-6) forward = Vector3.Forward();
-      let right = Vector3.Cross(up, forward).normalize();
-      if (right.lengthSquared() < 1e-6) right = Vector3.Right();
+      forward.normalize();
+      Vector3.CrossToRef(radialUp, forward, this._tmpRight);
+      let right = this._tmpRight.lengthSquared() > 1e-6 ? this._tmpRight.normalize() : Vector3.Right();
+      const up = radialUp;
 
-      const move = new Vector3(0, 0, 0);
+      this._move.set(0, 0, 0);
+      const fDir = forward.scale(-1);
       this._keys.forEach((code) => {
-        if (this.keysForward.includes(code)) move.addInPlace(forward);
-        if (this.keysBack.includes(code)) move.addInPlace(forward.scale(-1));
-        if (this.keysLeft.includes(code)) move.addInPlace(right.scale(-1));
-        if (this.keysRight.includes(code)) move.addInPlace(right);
-        if (this.keysUp.includes(code)) move.addInPlace(up);
-        if (this.keysDown.includes(code)) move.addInPlace(up.scale(-1));
+        if (this.keysForward.includes(code)) this._move.addInPlace(fDir);
+        if (this.keysBack.includes(code)) this._move.addInPlace(fDir.scale(-1));
+        if (this.keysLeft.includes(code)) this._move.addInPlace(right.scale(-1));
+        if (this.keysRight.includes(code)) this._move.addInPlace(right);
+        if (this.keysUp.includes(code)) this._move.addInPlace(up);
+        if (this.keysDown.includes(code)) this._move.addInPlace(up.scale(-1));
       });
 
-      if (move.lengthSquared() === 0) return;
-      move.normalize();
+      if (this._move.lengthSquared() === 0) return;
+      this._move.normalize();
       const speed = this.camera.speed ?? 50;
-      // Invert forward/back to match view direction intuition
-      const forwardDir = forward.scale(-1);
-      const finalMove = new Vector3(0, 0, 0);
-      this._keys.forEach((code) => {
-        if (this.keysForward.includes(code)) finalMove.addInPlace(forwardDir);
-        if (this.keysBack.includes(code)) finalMove.addInPlace(forwardDir.scale(-1));
-        if (this.keysLeft.includes(code)) finalMove.addInPlace(right.scale(-1));
-        if (this.keysRight.includes(code)) finalMove.addInPlace(right);
-        if (this.keysUp.includes(code)) finalMove.addInPlace(up);
-        if (this.keysDown.includes(code)) finalMove.addInPlace(up.scale(-1));
-      });
-      if (finalMove.lengthSquared() === 0) return;
-      finalMove.normalize();
-      this.camera.position.addInPlace(finalMove.scale(speed * dt));
-      // Refresh up vector to stay radial after movement
-      this.camera.upVector = this.camera.position.clone().normalize();
+      this.camera.position.addInPlace(this._move.scale(speed * dt));
+      // Keep up vector radial so movement stays level
+      this.camera.upVector = radialUp;
     }
   }
 
@@ -312,7 +357,6 @@ window.addEventListener('DOMContentLoaded', async () => {
     // Setup FreeCamera with only custom inputs (no pointer grab)
     const camera = new FreeCamera('camera', new Vector3(0, 0, 0), scene) as BaseCam;
     camera.inputs.clear();
-    camera.inputs.add(new KeyboardYawPitchInput());
     camera.inputs.add(new KeyboardMoveInput());
     camera.attachControl(canvas, true);
     // Allow mouse rotation to feel more like an FPS look camera
